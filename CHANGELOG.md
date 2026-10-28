@@ -2,25 +2,28 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
-## 0.2.4 — non ancora pubblicata
+## 0.2.5 — non ancora pubblicata
 
-Verificata sulla CF-30 solo in parte: il resume è stato letto nel log del kernel,
-non ancora riascoltato dopo il risveglio. Non va taggata prima di quella prova.
+Contiene tutto quello che era nella 0.2.4 (mai rilasciata) più la correzione
+dell'MPU. Verificata sulla CF-30 per la parte pcmcia, **non ancora** per il
+synth: dopo il resume l'MPU resta sordo. Non va taggata prima di quella prova.
 
-- **il driver prova a ricostruirsi la configurazione da solo dopo S3**: il core
-  pcmcia rifiuta `pcmcia_enable_device` al resume con `-EACCES`, anche se la
-  scheda è ancora sul bus con il driver legato. Se l'enable del core fallisce,
-  `.resume` ora fa quello che fa il probe: `pcmcia_disable_device`,
-  `pcmcia_loop_config`, `pcmcia_enable_device`, e solo dopo ripristina il modo
-  della scheda e il codec
-- **il resume ripristina il modo della scheda**: una sospensione è un ciclo di
-  alimentazione per la scheda, che perde sia lo stato del codec sia il modo di
-  routing (`0x334 <- 3`, `0x335 <- 1`). La firma va riletta *prima* di
-  riscrivere il modo, perché il modo la cancella
-- nota d'uso documentata nel README: con `reset_on_close=1` (default) chiudere
-  la porta rawmidi manda all-notes-off e all-sound-off, quindi un client che
-  apre, scrive una nota e chiude subito (come `amidi -S`) fa sentire solo
-  l'attacco
+- **il resume fa l'handshake dell'interfaccia di controllo della scheda**:
+  `base+4 <- 2`, `base+5 <- 1`, attesa che `base+5` torni a zero,
+  `base+10 <- 0` — la sequenza che sia `SCPENA.EXE` sia il VxD eseguono prima
+  di toccare l'MPU. Dopo S3 la scheda non accetta comandi MPU senza di essa
+- **`mpu_init_on_open` non è più annidato dentro `reset_on_open`**: era
+  irraggiungibile con il default `reset_on_open=0`, quindi il parametro non
+  aveva mai fatto niente
+- **il beep di probe inizializza l'MPU prima di suonare**: senza UART mode la
+  scheda scarta la frase di prova e il probe sembrava muto quando non lo era
+- il resume, se il core rifiuta `pcmcia_enable_device` con `-EACCES`, si
+  ricostruisce la configurazione come il probe (`pcmcia_disable_device`,
+  `pcmcia_loop_config`, `pcmcia_enable_device`) invece di arrendersi
+- il resume ripristina il modo della scheda (`0x334 <- 3`, `0x335 <- 1`)
+  leggendo la firma *prima*, perché la scrittura del modo la cancella
+- README: documentata la trappola `reset_on_close` + `amidi`, e riscritta la
+  sezione sospensione con quello che dicono i log veri
 
 ## 0.2.2 — 2026-10-28
 
