@@ -1,8 +1,8 @@
 # scp55 — Linux driver for the Roland SCP-55 "Sound Canvas" PC Card
 
-![build](https://github.com/Angelodt40/roland-scp55/actions/workflows/build.yml/badge.svg)
+[![build](https://github.com/Angelodt40/roland-scp55/actions/workflows/build.yml/badge.svg)](https://github.com/Angelodt40/roland-scp55/actions/workflows/build.yml)
 
-Copyright (C) 2026 Angelo Di Tomasso <angelo.dt40@gmail.com>
+Copyright (C) 2026 Angelo Di Tomasso. GPL-2.0, see [LICENSE](LICENSE).
 
 Revive a 1995 Roland SCP-55 PCMCIA sound module on a modern Linux kernel.
 The module programs the card's socket, un-mutes the codec that sits between
@@ -16,6 +16,10 @@ No firmware, no proprietary blobs, no vendor daemon. One small kernel module.
 **Status:** working. Tested on a Panasonic CF-30 (Toughbook) running MX-23.6
 Fluxbox i386, kernel `6.1.0-54-686-pae`. This is a single-hardware report —
 see [docs/hardware.md](docs/hardware.md) for what is known and what is not.
+
+Questions, bug reports and results from other machines: please open an
+[issue](https://github.com/Angelodt40/roland-scp55/issues). That is the
+preferred channel — the maintainer does not publish an email address.
 
 ## What the card is
 
@@ -47,65 +51,68 @@ that "does nothing" is usually not broken, just silent.
 
 ## Install
 
-Three ways, from laziest to most explicit.
+Three options, from least work to most control.
 
-**From a release package** (Debian, Ubuntu, MX and derivatives): download the
-`.deb` from the [releases page](https://github.com/Angelodt40/roland-scp55/releases)
+### 1. From a release package (Debian, Ubuntu, MX and derivatives)
+
+Download the `.deb` from the [releases page](https://github.com/Angelodt40/roland-scp55/releases)
 and install it. It builds itself through DKMS, so kernel updates are handled:
 
-    sudo apt install ./scp55-dkms_0.1.0-1_all.deb
+    sudo apt install ./scp55-dkms_0.1.3-1_all.deb
 
-**One command, from the repository** (needs the kernel headers):
+### 2. From the repository, one command
 
     git clone https://github.com/Angelodt40/roland-scp55.git
     cd roland-scp55
     sudo ./install.sh
 
 The script uses DKMS when it is available and falls back to a direct module
-install; it also installs the udev rule and sends the test phrase, so you
-know immediately whether the card answers. There is no manual loading step:
-with the module installed, the card is picked up when it is present, including
-after a reboot.
+install; it also installs the udev rule and sends the test phrase, so you know
+immediately whether the card answers.
 
-## Install with DKMS (recommended for kernels that update)
+There is no manual loading step: with the module installed, the card is picked
+up when it is present, including after a reboot.
 
-DKMS rebuilds the module automatically after a kernel update.
+### 3. DKMS by hand
 
-```sh
-sudo cp -r . /usr/src/scp55-0.1.0
-sudo dkms add -m scp55 -v 0.1.0
-sudo dkms build -m scp55 -v 0.1.0
-sudo dkms install -m scp55 -v 0.1.0
-sudo depmod -a
-```
+DKMS rebuilds the module automatically after a kernel update. Copy only what
+the build needs — not the whole working tree:
 
-## Install manually
+    sudo mkdir -p /usr/src/scp55-0.1.3
+    sudo cp -r src dkms.conf /usr/src/scp55-0.1.3/
+    sudo dkms add -m scp55 -v 0.1.3
+    sudo dkms build -m scp55 -v 0.1.3
+    sudo dkms install -m scp55 -v 0.1.3 --force
+    sudo depmod -a
 
-```sh
-make
-sudo cp scp55.ko /lib/modules/$(uname -r)/extra/
-sudo depmod -a
-sudo modprobe scp55
-```
+### Without DKMS
 
-Optional: install `udev/99-scp55.rules` so users in the `audio` group can
-open the raw MIDI device without root.
+From the repository root:
+
+    make
+    sudo make install
+
+Or by hand:
+
+    make -C src
+    sudo cp src/scp55.ko /lib/modules/$(uname -r)/extra/
+    sudo depmod -a
+    sudo modprobe scp55
+
+Optional: install `udev/99-scp55.rules` so users in the `audio` group can open
+the raw MIDI device without root.
 
 ## Usage
 
-```sh
-aplaymidi -l                      # look for "Roland SCP-55"
-aplaymidi -p 24:0 song.mid        # play a file to it
-```
+    aplaymidi -l                      # look for "Roland SCP-55"
+    aplaymidi -p 20:0 song.mid        # play a file to it
 
 Or with the helper script, which finds the port itself:
 
-```sh
-./scripts/scp55-play.sh song.mid [more.mid ...]
-```
+    ./scripts/scp55-play.sh song.mid [more.mid ...]
 
-In a DAW (Rosegarden, Qtractor) just select `Roland SCP-55` as the MIDI
-output device; the connection is made by ALSA, nothing to configure.
+In a DAW (Rosegarden, Qtractor) just select `Roland SCP-55` as the MIDI output
+device; the connection is made by ALSA, nothing to configure.
 
 ## Troubleshooting
 
@@ -124,7 +131,7 @@ card while the game runs on Linux:
 
     [midi]
     mididevice=alsa
-    midiconfig=24:0      # the client:port printed by aplaymidi -l
+    midiconfig=20:0      ; the client:port printed by aplaymidi -l
 
 Nothing else to configure: DOSBox connects to the same sequencer port the
 driver exposes.
@@ -139,32 +146,18 @@ natively, the card needs a DOS-side enabler: see Related work below.
 
 ## Status of testing
 
-Verified on one machine only (details above). Not verified, and worth knowing
-before you spend an evening on it:
+Verified on one machine only (details above). What is not verified, and worth
+knowing before you spend an evening on it:
 
 - suspend/resume — the socket is programmed at load time and not restored
 - kernels other than 6.x — the code uses plain inb/outb and the ALSA rawmidi
-  API, so it should port, but nobody has tried
-- automatic loading — **verified**: with the module installed through DKMS and
-  `depmod` run, a reboot with the card inserted loads `scp55` and creates the
-  sequencer port without any manual `modprobe` (Panasonic CF-30, MX-23.6,
-  kernel 6.1.0-54-686-pae). The module advertises a PCMCIA modalias
-  (`pcmcia:mC00Cc0001...`), which is what makes this work
+  API, so it should port, but nobody has tried at runtime
 - two cards in one machine — the sequencer port name is fixed
 
-Reports from other hardware are the most useful thing you can contribute.
-
-## Versioning
-
-Version numbers follow `MAJOR.MINOR.PATCH`. The same string appears in three
-places and they must match:
-
-- `dkms.conf` → `PACKAGE_VERSION`
-- `src/scp55.c` → `MODULE_VERSION(...)`, visible with `modinfo -F version`
-- the git tag, `vX.Y.Z`
-
-Releasing means: bump those three, add an entry to `CHANGELOG.md`, commit, then
-`git tag -a vX.Y.Z -m "scp55 X.Y.Z"` and `git push --tags`.
+Automatic loading **is** verified: with the module installed through DKMS and
+`depmod` run, a reboot with the card inserted loads `scp55` and creates the
+sequencer port without any manual `modprobe`. The module advertises a PCMCIA
+modalias (`pcmcia:mC00Cc0001...`), which is what makes this work.
 
 ## Kernel compatibility
 
@@ -176,8 +169,39 @@ Compiled in CI on every push — build only, no hardware involved:
 | 6.12 | Debian trixie | builds |
 | latest | Fedora | builds |
 
-Runtime-tested on 6.1.0-54-686-pae only (Panasonic CF-30). The badge at the top
-reports the current CI state.
+Runtime-tested on 6.1.0-54-686-pae only. The badge at the top reports the
+current CI state.
+
+## What is in this repository
+
+    src/scp55.c           the driver
+    Makefile              builds from the repository root
+    dkms.conf             DKMS build description
+    install.sh            one-command installer (DKMS, or direct build)
+    packaging/make-deb.sh builds the .deb without debhelper
+    udev/99-scp55.rules   permissions for the raw MIDI device
+    scripts/              helper to play files
+    docs/hardware.md      what is known about the card, and open questions
+    experiments/          earlier variants (play/midi/beep), not maintained
+    .github/workflows/    CI: compile matrix, package on tag
+    CHANGELOG.md          release notes
+
+The files under `experiments/` are not maintained: they were the steps that led
+here, and they are kept because the comments in them document behaviour that is
+otherwise undocumented.
+
+## Versioning
+
+Version numbers follow `MAJOR.MINOR.PATCH`. The same string appears in three
+places and they must match:
+
+- `dkms.conf` → `PACKAGE_VERSION`
+- `src/scp55.c` → `MODULE_VERSION(...)`, visible with `modinfo -F version`
+- the git tag, `vX.Y.Z`
+
+Releasing means: bump those three, add an entry to `CHANGELOG.md`, commit, then
+`git tag -a vX.Y.Z -m "scp55 X.Y.Z"` and `git push --tags`. CI builds the .deb
+on the tag and attaches it to the release.
 
 ## Related work and thanks
 
@@ -188,21 +212,6 @@ reports the current CI state.
   codec data port at 0x339, and the codec must be un-muted before the synth is
   audible. Those facts are stated here with confidence because their write-up
   confirms them.
-
-## What is in this repository
-
-```
-src/scp55.c          the driver
-dkms.conf            DKMS build description
-udev/99-scp55.rules  permissions for the raw MIDI device
-scripts/             helper to play files
-docs/hardware.md     what is known about the card, and open questions
-experiments/         earlier variants (play/midi/beep) kept for reference
-```
-
-The files under `experiments/` are not maintained: they were the steps that
-led here, and they are kept because the comments in them document behaviour
-that is otherwise undocumented.
 
 ## In italiano (breve)
 

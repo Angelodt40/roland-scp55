@@ -2,6 +2,17 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.3 — 2026-10-28
+
+Documentation and packaging hygiene, no driver change.
+
+- no email address in the repository: contact happens through GitHub issues
+- `Makefile` in the repository root, so `make` works from a fresh clone
+- the DKMS instructions copy only `src/` and `dkms.conf`, not the whole tree
+- complete file tree in the README; badge links to the CI runs, not the image
+- install options numbered 1-3, no more "three ways" followed by four sections
+- default branch renamed to `main`
+
 ## 0.1.2 — 2026-10-28
 
 Documentation only, no code change.

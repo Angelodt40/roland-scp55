@@ -36,7 +36,7 @@ Section: kernel
 Priority: optional
 Architecture: $ARCH
 Depends: dkms (>= 2.1.0), make | build-essential, gcc
-Maintainer: Angelo Di Tomasso <angelo.dt40@gmail.com>
+Maintainer: Angelo Di Tomasso <angelodt40@users.noreply.github.com>
 Homepage: https://github.com/Angelodt40/roland-scp55
 Description: Linux driver for the Roland SCP-55 Sound Canvas PC Card
  Programs the PCMCIA socket so the MPU-401 UART answers at I/O base 0x330,
