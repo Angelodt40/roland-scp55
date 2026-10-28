@@ -40,6 +40,25 @@ static int have_read;
 static char status[512] = "not probed\n";
 
 static int beep_on_probe = 1;
+static int reset_on_open = 1;
+module_param(reset_on_open, int, 0644);
+MODULE_PARM_DESC(reset_on_open, "send GS reset and all-notes-off when the output opens");
+
+static int reset_on_close = 1;
+module_param(reset_on_close, int, 0644);
+MODULE_PARM_DESC(reset_on_close, "send all-notes-off and all-sound-off when the output closes");
+
+/* Serialises every port access: the delayed work, the procfs handlers and the
+ * test phrase all talk to the same registers.
+ */
+static DEFINE_MUTEX(io_mutex);
+
+/* Protects the substream pointer and the counters, which are touched from
+ * contexts that may not sleep.
+ */
+static DEFINE_SPINLOCK(state_lock);
+static bool pending_reset, pending_panic;
+static unsigned int reset_open_count, reset_close_count, tx_byte_count;
 module_param(beep_on_probe, int, 0444);
 
 static struct pcmcia_device_id scp55_ids[] = {
@@ -118,40 +137,125 @@ static void beep(void)
 }
 
 /* ---- ALSA rawmidi ---- */
+/* --- transmit helpers, caller must hold io_mutex --- */
+static void send_bytes(const u8 *buf, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		mo(buf[i]);
+}
+
+static void send_gs_reset(void)
+{
+	static const u8 gs[] = { 0xf0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7f,
+				 0x00, 0x41, 0xf7 };
+	int ch;
+
+	/* controllers first: a reset alone can leave notes hanging */
+	for (ch = 0; ch < 16; ch++) {
+		u8 notes_off[3] = { 0xb0 | ch, 0x7b, 0x00 };
+
+		send_bytes(notes_off, 3);
+	}
+	send_bytes(gs, sizeof(gs));
+	msleep(60);
+}
+
+static void send_panic(void)
+{
+	int ch;
+
+	for (ch = 0; ch < 16; ch++) {
+		u8 msg[3] = { 0xb0 | ch, 0x78, 0x00 };
+		u8 notes_off[3] = { 0xb0 | ch, 0x7b, 0x00 };
+
+		/* all sound off, then all notes off */
+		send_bytes(msg, 3);
+		send_bytes(notes_off, 3);
+	}
+}
+
+static void beep_locked(void)
+{
+	mutex_lock(&io_mutex);
+	if (io_base)
+		beep();
+	mutex_unlock(&io_mutex);
+}
+
 static void tx_work_fn(struct work_struct *w)
 {
 	unsigned char c;
-	struct snd_rawmidi_substream *sub = tx_sub;
+	struct snd_rawmidi_substream *sub;
+	bool do_reset, do_panic;
+	unsigned long flags;
 	int again = 0;
 
-	if (!sub)
+	spin_lock_irqsave(&state_lock, flags);
+	sub = tx_sub;
+	do_reset = pending_reset;
+	do_panic = pending_panic;
+	pending_reset = false;
+	pending_panic = false;
+	spin_unlock_irqrestore(&state_lock, flags);
+
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		mutex_unlock(&io_mutex);
 		return;
-	while (snd_rawmidi_transmit_peek(sub, &c, 1) == 1) {
+	}
+
+	if (do_reset && reset_on_open) {
+		send_gs_reset();
+		spin_lock_irqsave(&state_lock, flags);
+		reset_open_count++;
+		spin_unlock_irqrestore(&state_lock, flags);
+	}
+	if (do_panic && reset_on_close) {
+		send_panic();
+		spin_lock_irqsave(&state_lock, flags);
+		reset_close_count++;
+		spin_unlock_irqrestore(&state_lock, flags);
+	}
+
+	while (sub && snd_rawmidi_transmit_peek(sub, &c, 1) == 1) {
 		if (!uart_ready()) {
 			again = 1;
 			break;
 		}
 		outb(c, io_base);
 		snd_rawmidi_transmit_ack(sub, 1);
+		spin_lock_irqsave(&state_lock, flags);
+		tx_byte_count++;
+		spin_unlock_irqrestore(&state_lock, flags);
 	}
+	mutex_unlock(&io_mutex);
+
 	if (again)
 		schedule_delayed_work(&tx_work, msecs_to_jiffies(1));
 }
 
-static int out_open(struct snd_rawmidi_substream *sub) { return 0; }
-static int out_close(struct snd_rawmidi_substream *sub) { return 0; }
+static int out_open(struct snd_rawmidi_substream *substream) { return 0; }
+static int out_close(struct snd_rawmidi_substream *substream) { return 0; }
 
-static void out_trigger(struct snd_rawmidi_substream *sub, int up)
+static void out_trigger(struct snd_rawmidi_substream *substream, int up)
 {
+	unsigned long flags;
+
+	/* Atomic context: flag and schedule only, never sleep here. */
+	spin_lock_irqsave(&state_lock, flags);
 	if (up) {
-		tx_sub = sub;
-		schedule_delayed_work(&tx_work, 0);
+		tx_sub = substream;
+		pending_reset = true;
 	} else {
 		tx_sub = NULL;
-		cancel_delayed_work_sync(&tx_work);
+		pending_panic = true;
 	}
-}
+	spin_unlock_irqrestore(&state_lock, flags);
 
+	schedule_delayed_work(&tx_work, 0);
+}
 static const struct snd_rawmidi_ops out_ops = {
 	.open		= out_open,
 	.close		= out_close,
@@ -161,7 +265,21 @@ static const struct snd_rawmidi_ops out_ops = {
 /* ---- /proc/scp55 ---- */
 static int status_show(struct seq_file *m, void *v)
 {
+	unsigned long flags;
+	unsigned int ro, rc, tb;
+
 	seq_puts(m, status);
+	if (!io_base)
+		return 0;
+
+	spin_lock_irqsave(&state_lock, flags);
+	ro = reset_open_count;
+	rc = reset_close_count;
+	tb = tx_byte_count;
+	spin_unlock_irqrestore(&state_lock, flags);
+
+	seq_printf(m, "  resets    : %u on open, %u on close\n", ro, rc);
+	seq_printf(m, "  sent      : %u bytes\n", tb);
 	return 0;
 }
 
@@ -180,11 +298,10 @@ static ssize_t status_write(struct file *file, const char __user *buf,
 	if (copy_from_user(k, buf, count))
 		return -EFAULT;
 	k[count] = 0;
-	if (io_base && k[0] == '1')
-		beep();
+	if (k[0] == '1')
+		beep_locked();
 	return count;
 }
-
 static const struct proc_ops status_ops = {
 	.proc_open	= status_open,
 	.proc_read	= seq_read,
@@ -216,6 +333,7 @@ static ssize_t mix_write(struct file *file, const char __user *buf,
 	char k[32];
 	unsigned int idx, val;
 	char cmd;
+	ssize_t ret = count;
 
 	if (!io_base)
 		return -ENODEV;
@@ -225,11 +343,23 @@ static ssize_t mix_write(struct file *file, const char __user *buf,
 		return -EFAULT;
 	k[count] = 0;
 
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		ret = -ENODEV;
+		goto out;
+	}
 	if (sscanf(k, " w %x %x", &idx, &val) == 2) {
-		cc_put((u8)idx, (u8)val);
+		if (idx > 0xff || val > 0xff)
+			ret = -EINVAL;
+		else
+			cc_put((u8)idx, (u8)val);
 	} else if (sscanf(k, " r %x", &idx) == 1) {
-		last_read = cc_get((u8)idx);
-		have_read = 1;
+		if (idx > 0xff) {
+			ret = -EINVAL;
+		} else {
+			last_read = cc_get((u8)idx);
+			have_read = 1;
+		}
 	} else if (sscanf(k, " %c", &cmd) == 1) {
 		if (cmd == 'i') {
 			cc_put(0x06, 0x00); cc_put(0x07, 0x00);
@@ -240,9 +370,10 @@ static ssize_t mix_write(struct file *file, const char __user *buf,
 			cc_put(0x04, 0x88); cc_put(0x05, 0x88);
 		}
 	}
-	return count;
+out:
+	mutex_unlock(&io_mutex);
+	return ret;
 }
-
 static const struct proc_ops mix_ops = {
 	.proc_open	= mix_open,
 	.proc_read	= seq_read,
@@ -357,16 +488,27 @@ static int scp55_probe(struct pcmcia_device *link)
 		base, codec_ok ? "ok" : "silent", card->number);
 
 	if (beep_on_probe)
-		beep();
+		beep_locked();
 	return 0;
 }
 
 static void scp55_remove(struct pcmcia_device *link)
 {
-	tx_sub = NULL;
-	cancel_delayed_work_sync(&tx_work);
 	remove_proc_entry("scp55mix", NULL);
 	remove_proc_entry("scp55", NULL);
+
+	/* Stop the work first, then wait for any in-flight register access
+	 * before the card goes away underneath it.
+	 */
+	cancel_delayed_work_sync(&tx_work);
+	mutex_lock(&io_mutex);
+	io_base = 0;
+	mutex_unlock(&io_mutex);
+
+	spin_lock_irq(&state_lock);
+	tx_sub = NULL;
+	spin_unlock_irq(&state_lock);
+
 	if (card) {
 		snd_card_free(card);
 		card = NULL;
@@ -374,9 +516,7 @@ static void scp55_remove(struct pcmcia_device *link)
 	}
 	pcmcia_disable_device(link);
 	scp_dev = NULL;
-	io_base = 0;
 }
-
 static struct pcmcia_driver scp55_driver = {
 	.owner		= THIS_MODULE,
 	.name		= DRV_NAME,
@@ -400,4 +540,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.3");
+MODULE_VERSION("0.1.4");

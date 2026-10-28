@@ -2,6 +2,21 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.4 — 2026-10-28
+
+- **no more stuck notes**: a GS reset plus all-notes-off on all 16 channels is
+  sent when the output opens, and all-sound-off plus all-notes-off when it
+  closes, so interrupting playback no longer leaves notes ringing. Controlled by
+  the module parameters `reset_on_open` and `reset_on_close` (both default 1)
+- **locking**: a mutex serialises every register access (deferred work, procfs,
+  test phrase) and a spinlock protects the substream pointer and counters, which
+  are touched from atomic context. Teardown order fixed: proc entries, then
+  work, then `io_base` under the mutex, then the card
+- `/proc/scp55` now reports how many resets were sent and how many payload
+  bytes went out, which is what made the behaviour testable
+- validated on hardware: 15 playbacks with concurrent procfs reads and writes,
+  no kernel warnings, counters consistent
+
 ## 0.1.3 — 2026-10-28
 
 Documentation and packaging hygiene, no driver change.
