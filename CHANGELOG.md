@@ -2,6 +2,13 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.2 — 2026-10-28
+
+Documentation only, no code change.
+
+- autoload on card insertion is now documented as verified rather than expected
+- release artifacts are built by CI on the tag and attached automatically
+
 ## 0.1.1 — 2026-10-28
 
 - Fix the DKMS build: the module is produced in `src/`, so `dkms.conf` now sets
