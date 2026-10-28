@@ -40,6 +40,14 @@ static int have_read;
 static char status[512] = "not probed\n";
 
 static int beep_on_probe = 1;
+static int card_mode = 1;
+module_param(card_mode, int, 0644);
+MODULE_PARM_DESC(card_mode, "select the card's audio routing mode (3) at probe instead of relying on the codec loopback");
+
+static int use_loopback = 0;
+module_param(use_loopback, int, 0644);
+MODULE_PARM_DESC(use_loopback, "close the codec's ADC to DAC loopback: the workaround 0.2.0 relied on, unnecessary once the card mode is selected");
+
 static int mpu_init_on_open = 0;
 module_param(mpu_init_on_open, int, 0644);
 MODULE_PARM_DESC(mpu_init_on_open, "re-initialise the MPU-401 UART on every open (off by default: the card is already in UART mode after power-on, and a lost 0x3F leaves it in intelligent mode, where it discards every note)");
@@ -464,6 +472,9 @@ static const struct proc_ops mix_ops = {
 
 
 /* ---- codec bring-up ----
+ * The routing itself is selected by card_mode_select(); the loopback below is
+ * kept only as a switch for cards or machines where the mode write does not
+ * take.
  * The synth reaches the output through the CS4231A's analogue input, so the
  * codec has to digitise it and hand it back to its own DAC: unmuting the
  * input gains is not enough, the ADC -> DAC loopback path (LOOPBACK bit 1)
@@ -474,6 +485,20 @@ static const struct proc_ops mix_ops = {
  * Verified on hardware 2026-10-28: with 0x0E = 0x02 the test phrase is
  * audible, with 0x0E = 0x00 the card is silent.
  */
+/* Select the card's audio routing. The vendor wave path writes 3 to the
+ * control register and 1 to its neighbour before playing
+ * (SCP95.DRV, segment 7) - with that mode the synth reaches the codec's DAC
+ * without the ADC loopback, verified on hardware: loopback off, mode 3,
+ * test phrase audible.
+ */
+static void card_mode_select(void)
+{
+	outb(0x03, io_base + 4);
+	udelay(50);
+	outb(0x01, io_base + 5);
+	udelay(50);
+}
+
 static void codec_init(void)
 {
 	u8 aux1;
@@ -491,7 +516,8 @@ static void codec_init(void)
 	cc_put(0x13, 0x08); cc_put(0x14, 0x08);	/* line in */
 	cc_put(0x15, 0x08); cc_put(0x16, 0x08);	/* mic */
 	cc_put(0x1b, 0x08);			/* mono input */
-	cc_put(0x0e, 0x02);			/* ADC -> DAC loopback */
+	if (use_loopback)
+		cc_put(0x0e, 0x02);		/* ADC -> DAC loopback */
 
 	cc_put(0x09, 0x00);			/* leave mode change */
 
@@ -648,9 +674,12 @@ static int scp55_probe(struct pcmcia_device *link)
 	io_base = base;
 	scp_dev = link;
 
+	/* Identify first: selecting the card mode overwrites the signature. */
+	signature = card_signature();
+	if (card_mode)
+		card_mode_select();
 	codec_init();
 	aux1 = cc_get(0x02);
-	signature = card_signature();
 	proc_create("scp55", 0666, NULL, &status_ops);
 	proc_create("scp55mix", 0666, NULL, &mix_ops);
 
@@ -774,4 +803,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.0");
+MODULE_VERSION("0.2.1");

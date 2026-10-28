@@ -2,6 +2,21 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.2.1 — 2026-10-28
+
+- **the codec loopback was a workaround, and it is gone**: the vendor wave path
+  selects the card's audio routing by writing `3` to the control register at
+  `base+4` and `1` to its neighbour (recovered from `SCP95.DRV`, segment 7).
+  With that mode the synth reaches the codec's DAC directly — verified on
+  hardware with the loopback register read back as `0x00`: the test phrase and
+  a full MIDI file are audible. The loopback is now `use_loopback=0` by
+  default and kept only as a switch
+- **the card is identified before it is configured**: selecting the mode
+  overwrites the `0xAA` signature, so `/proc/scp55` reported the card as
+  unexpected until the read was moved ahead of the mode write
+- `card_mode=1` by default; both parameters documented in
+  [docs/hardware.md](docs/hardware.md)
+
 ## 0.2.0 — 2026-10-28
 
 - **card identification by signature**: after power-on the card answers `0xAA`

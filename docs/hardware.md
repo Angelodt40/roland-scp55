@@ -40,18 +40,22 @@ the card, is in [vendor-init-sequence.md](vendor-init-sequence.md).
 ## Output path
 
 The synth does not drive a DAC with its own line out: its audio enters the
-CS4231A codec, and the codec drives the card's analogue output.
+CS4231A codec, and the codec drives the card's analogue output. **How** it
+reaches the codec depends on a mode the card selects through the control pair
+at `base+4`/`base+5`.
 
-- The codec's ADC→DAC loopback (`0x0E` bit 1) must be closed, otherwise the
-  card is completely silent even when every status register looks healthy.
-- Proven by A/B test on hardware: same chord, loopback on = audible, loopback
-  off = silence.
-- Unmuting the input gains alone is **not** sufficient. Version 0.1.5 did only
-  that and appeared to work when the card was inserted into a running machine,
-  then went mute after a cold power-up.
-
-Neither vendor program sets the loopback, which is why this is listed as an open
-question below.
+- The vendor wave path writes `0x03` to `base+4` and `0x01` to `base+5`
+  before playing (`SCP95.DRV`, segment 7). With that mode the audio is routed
+  as the card was designed to route it.
+- **Verified on hardware:** with that mode selected and the codec's loopback
+  register read back as `0x00`, both the test phrase and a full MIDI file are
+  audible. The driver selects the mode at probe (`card_mode=1`).
+- The codec's ADC→DAC loopback (`0x0E` bit 1) is what version 0.2.0 relied on.
+  It works, but it was a workaround for not knowing about the mode: unmuting the
+  input gains alone is not enough, and without either the loopback or the mode
+  the card is completely silent while every status register looks healthy. The
+  loopback is still available as `use_loopback=1` for cards where the mode
+  write does not take.
 
 ## The MPU-401
 
