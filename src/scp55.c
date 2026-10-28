@@ -589,6 +589,14 @@ static void mpu_init(void)
 	u8 ack = 0;
 	int i, attempt;
 
+	/* The card only answers MPU commands after its control interface has
+	 * been programmed: selector 2, value 1, then wait for the status to
+	 * read back zero. Verified on hardware: without this, 0x3F is never
+	 * acknowledged, the fallback 0xFF leaves the synth deaf, and the card
+	 * looks dead until the next power cycle.
+	 */
+	card_control_init();
+
 	/* Drop whatever the card queued, but never loop forever: DRR can stay
 	 * high with a byte that never pops.
 	 */
@@ -730,15 +738,14 @@ static int scp55_probe(struct pcmcia_device *link)
 	pr_info(DRV_NAME ": io 0x%03x, codec %s, card %d\n",
 		base, codec_ok ? "ok" : "silent", card->number);
 
-	if (beep_on_probe) {
-		/* The test phrase goes through the MPU: without UART mode the
-		 * card discards it and the probe looks silent when it is not.
-		 */
-		mutex_lock(&io_mutex);
-		mpu_init();
-		mutex_unlock(&io_mutex);
+	/* Never initialise the MPU here. The card is already in UART mode
+	 * after power-on and does not acknowledge 0x3F, so mpu_init() would
+	 * fall through to a 0xFF reset and leave the synth deaf. That is what
+	 * broke 0.2.5/0.2.8 at boot: the test phrase is discarded either way,
+	 * because the probe does not need the MPU to be touched at all.
+	 */
+	if (beep_on_probe)
 		beep_locked();
-	}
 	return 0;
 }
 
@@ -865,4 +872,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.6");
+MODULE_VERSION("0.2.8");
