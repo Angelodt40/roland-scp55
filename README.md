@@ -163,6 +163,19 @@ places and they must match:
 Releasing means: bump those three, add an entry to `CHANGELOG.md`, commit, then
 `git tag -a vX.Y.Z -m "scp55 X.Y.Z"` and `git push --tags`.
 
+## Kernel compatibility
+
+Compiled in CI on every push — build only, no hardware involved:
+
+| Kernel | Distribution | Result |
+| --- | --- | --- |
+| 6.1 | Debian bookworm | builds |
+| 6.12 | Debian trixie | builds |
+| latest | Fedora | builds |
+
+Runtime-tested on 6.1.0-54-686-pae only (Panasonic CF-30). The badge at the top
+reports the current CI state.
+
 ## Related work and thanks
 
 - **zikolas/scp55-enabler** — a DOS enabler for the same card, C and assembly,
