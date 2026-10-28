@@ -2,6 +2,23 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.9 — 2026-10-28
+
+- **the MPU is no longer reset on every open**: `mpu_init()` sent `0xFF` (which
+  puts an MPU-401 into *intelligent* mode) and then `0x3F` without waiting for
+  the card to be ready. When the `0x3F` was lost the card stayed in intelligent
+  mode and silently discarded every note — `aplaymidi` reported success, the
+  byte counters grew, and the card was mute. The driver now leaves the MPU alone
+  on open (`mpu_init_on_open`, off by default): after power-on the card is
+  already in UART mode, as the probe beep proves
+- **`reset_on_open` off by default**: the GS reset on open is harmless on its
+  own, but clients that open and close the port repeatedly turned it into a
+  stream of resets that wiped playback mid-file. Both parameters are documented
+  and can be re-enabled
+- **`mpu_init()` rewritten** for the case where it *is* needed: it waits for DSR
+  before each command byte, retries `0x3F` up to five times and only falls back
+  to a full `0xFF` reset when nothing is acknowledged
+
 ## 0.1.8 — 2026-10-28
 
 - **bounded drain in mpu_init()**: 0.1.7 drained the MPU read register with an

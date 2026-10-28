@@ -40,9 +40,13 @@ static int have_read;
 static char status[512] = "not probed\n";
 
 static int beep_on_probe = 1;
-static int reset_on_open = 1;
+static int mpu_init_on_open = 0;
+module_param(mpu_init_on_open, int, 0644);
+MODULE_PARM_DESC(mpu_init_on_open, "re-initialise the MPU-401 UART on every open (off by default: the card is already in UART mode after power-on, and a lost 0x3F leaves it in intelligent mode, where it discards every note)");
+
+static int reset_on_open = 0;
 module_param(reset_on_open, int, 0644);
-MODULE_PARM_DESC(reset_on_open, "send GS reset and all-notes-off when the output opens");
+MODULE_PARM_DESC(reset_on_open, "send GS reset and all-notes-off when the output opens (off by default: clients that open and close the port repeatedly would silence playback mid-file, which is exactly what happened with aplaymidi)");
 
 static int reset_on_close = 1;
 module_param(reset_on_close, int, 0644);
@@ -270,7 +274,8 @@ static void tx_work_fn(struct work_struct *w)
 	}
 
 	if (do_reset && reset_on_open) {
-		mpu_init();
+		if (mpu_init_on_open)
+			mpu_init();
 		send_gs_reset();
 		spin_lock_irqsave(&state_lock, flags);
 		reset_open_count++;
@@ -498,31 +503,56 @@ static int mpu_wait_read(u8 *out, int ms)
 	return 0;
 }
 
+static int mpu_ready(int ms)
+{
+	int i;
+
+	for (i = 0; i < ms * 100; i++) {
+		if (!(inb(io_base + 1) & 0x40))
+			return 1;
+		udelay(10);
+	}
+	return 0;
+}
+
+/* Put the UART back into UART mode. The command byte is only written once the
+ * card says it is ready, and 0x3F is retried until it is acknowledged: a lost
+ * 0x3F leaves the card in intelligent mode, where it silently discards every
+ * note that arrives. 0xFF (full reset) is a last resort, because it is what
+ * puts the card in intelligent mode in the first place.
+ */
 static void mpu_init(void)
 {
 	u8 ack = 0;
-	int i;
+	int i, attempt;
 
-	/* Drop whatever the card queued before we got here: a stale ACK left
-	 * in the read register makes every later command look unanswered.
-	 * The loop must stay bounded: on this card DRR can remain set with a
-	 * byte that never pops, and an unbounded read loop wedges the
-	 * workqueue (seen in 0.1.7, rosegarden froze solid on the splash).
+	/* Drop whatever the card queued, but never loop forever: DRR can stay
+	 * high with a byte that never pops.
 	 */
 	for (i = 0; i < 8 && (inb(io_base + 1) & 0x80); i++)
 		inb(io_base);
 
-	/* Reset, then switch to UART mode; each command is acknowledged with
-	 * 0xFE. Without this the card keeps a stale byte in its read path and
-	 * the receive side returns the same value forever.
-	 */
-	outb(0xff, io_base + 1);
-	if (!mpu_wait_read(&ack, 1000) || ack != 0xfe)
-		pr_info(DRV_NAME ": MPU reset not acknowledged (%#04x)\n", ack);
+	for (attempt = 0; attempt < 5; attempt++) {
+		if (!mpu_ready(500))
+			continue;
+		outb(0x3f, io_base + 1);
+		if (mpu_wait_read(&ack, 300) && ack == 0xfe) {
+			pr_info(DRV_NAME ": MPU-401 in UART mode\n");
+			return;
+		}
+	}
 
-	outb(0x3f, io_base + 1);
-	if (!mpu_wait_read(&ack, 1000) || ack != 0xfe)
-		pr_info(DRV_NAME ": UART mode not acknowledged (%#04x)\n", ack);
+	/* Still not answering: full reset, then UART mode again. */
+	pr_info(DRV_NAME ": UART mode not acknowledged, resetting the MPU\n");
+	if (mpu_ready(500))
+		outb(0xff, io_base + 1);
+	mpu_wait_read(&ack, 1000);
+	if (mpu_ready(500))
+		outb(0x3f, io_base + 1);
+	if (mpu_wait_read(&ack, 1000) && ack == 0xfe)
+		pr_info(DRV_NAME ": UART mode restored after reset\n");
+	else
+		pr_info(DRV_NAME ": MPU-401 still silent\n");
 }
 
 static int card_setup(struct pcmcia_device *link)
@@ -729,4 +759,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.8");
+MODULE_VERSION("0.1.9");
