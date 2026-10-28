@@ -1,5 +1,7 @@
 # scp55 — Linux driver for the Roland SCP-55 "Sound Canvas" PC Card
 
+![build](https://github.com/Angelodt40/roland-scp55/actions/workflows/build.yml/badge.svg)
+
 Copyright (C) 2026 Angelo Di Tomasso <angelo.dt40@gmail.com>
 
 Revive a 1995 Roland SCP-55 PCMCIA sound module on a modern Linux kernel.
@@ -46,6 +48,12 @@ that "does nothing" is usually not broken, just silent.
 ## Install
 
 Three ways, from laziest to most explicit.
+
+**From a release package** (Debian, Ubuntu, MX and derivatives): download the
+`.deb` from the [releases page](https://github.com/Angelodt40/roland-scp55/releases)
+and install it. It builds itself through DKMS, so kernel updates are handled:
+
+    sudo apt install ./scp55-dkms_0.1.0-1_all.deb
 
 **One command, from the repository** (needs the kernel headers):
 
