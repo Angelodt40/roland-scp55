@@ -1,6 +1,6 @@
 # scp55 — Linux driver for the Roland SCP-55 "Sound Canvas" PC Card
 
-Copyright (C) 2026 Angelo Di Tomasso <angelo@ditomasso.it>
+Copyright (C) 2026 Angelo Di Tomasso <angelo.dt40@gmail.com>
 
 Revive a 1995 Roland SCP-55 PCMCIA sound module on a modern Linux kernel.
 The module programs the card's socket, un-mutes the codec that sits between
@@ -135,11 +135,25 @@ before you spend an evening on it:
 - suspend/resume — the socket is programmed at load time and not restored
 - kernels other than 6.x — the code uses plain inb/outb and the ALSA rawmidi
   API, so it should port, but nobody has tried
-- automatic loading — there is no PCMCIA modalias, so `modprobe scp55` has to
-  be run by hand or from a startup script
+- automatic loading — the module advertises a PCMCIA modalias
+  (`pcmcia:mC00Cc0001...`), so inserting the card should load it once the module
+  is installed and `depmod` has run; this has not been verified with a cold boot
+  and a card insertion, so treat it as expected rather than proven
 - two cards in one machine — the sequencer port name is fixed
 
 Reports from other hardware are the most useful thing you can contribute.
+
+## Versioning
+
+Version numbers follow `MAJOR.MINOR.PATCH`. The same string appears in three
+places and they must match:
+
+- `dkms.conf` → `PACKAGE_VERSION`
+- `src/scp55.c` → `MODULE_VERSION(...)`, visible with `modinfo -F version`
+- the git tag, `vX.Y.Z`
+
+Releasing means: bump those three, add an entry to `CHANGELOG.md`, commit, then
+`git tag -a vX.Y.Z -m "scp55 X.Y.Z"` and `git push --tags`.
 
 ## Related work and thanks
 
