@@ -1,47 +1,137 @@
 # Hardware notes — Roland SCP-55
 
-Everything here was established by testing on one card and one machine. If you
-have different results, please open an issue: this document is the most useful
-part of the repository for the next person.
+Everything below was established by testing on one card (a 1995 SCP-55) in one
+machine (Panasonic CF-30) and by disassembling the original Roland driver disk.
+Where a statement is a hypothesis rather than a measurement it is labelled as
+such — this file is more useful honest than confident.
+
+If your card behaves differently, please open an issue. Negative results are as
+welcome as positive ones.
 
 ## Identity
 
-- Type: 16-bit PCMCIA (PC Card), not CardBus.
-- Function: GS/GM synthesiser with an MPU-401 compatible MIDI interface.
-- Output path: the synth does not drive a DAC with its own line out; audio
-  goes through the host's CS4231A codec, which starts muted.
+- 16-bit PCMCIA (PC Card), not CardBus. Type II.
+- Roland SCP-55 "Sound Canvas": GS/GM synthesiser plus an MPU-401 compatible
+  MIDI interface, on the card.
+- The CIS declares a **twelve port** I/O window (`IOConfig=330-33B`), a
+  gameport at `0x201` and IRQ 5, with no DMA channel.
 
-## What the driver programs
+## Port map
 
-- The PCMCIA socket registers, so that the MPU-401 UART answers at I/O base
-  `0x330`. The exact attribute-memory and configuration-register sequence is
-  in `src/scp55.c`, next to the comments that explain each step.
-- The CS4231A codec, to un-mute the two channels the synth feeds. The register
-  indices and the values that worked are reachable at runtime through
-  `/proc/scp55mix`, so they can be changed without rebuilding.
+| ports | what | status |
+|---|---|---|
+| `base+0` / `base+1` | MPU-401 data / status | proven |
+| `base+4` / `base+5` | control and signature pair | partly proven |
+| `base+8` / `base+9` | CS4231A codec index / data | proven |
+| `base+10` | written `0x00` by both vendor programs | unknown purpose |
+
+## The signature: 0xAA
+
+After power-on `base+5` reads **0xAA**. Both vendor programs verify it
+(`SCPENA.EXE` at 0x29ae, `SCP95.VXD` at 0x29b5); they first select the
+register with a write of `0x00` to `base+4`.
+
+The driver only *reads* it, at probe, before anything else has touched those
+ports. That is deliberate: writing to this pair is a **mode switch**, and doing
+it on a card that is already running silences it until the next power cycle —
+observed, not theorised. The full sequence the vendor runs, and what it does to
+the card, is in [vendor-init-sequence.md](vendor-init-sequence.md).
+
+## Output path
+
+The synth does not drive a DAC with its own line out: its audio enters the
+CS4231A codec, and the codec drives the card's analogue output.
+
+- The codec's ADC→DAC loopback (`0x0E` bit 1) must be closed, otherwise the
+  card is completely silent even when every status register looks healthy.
+- Proven by A/B test on hardware: same chord, loopback on = audible, loopback
+  off = silence.
+- Unmuting the input gains alone is **not** sufficient. Version 0.1.5 did only
+  that and appeared to work when the card was inserted into a running machine,
+  then went mute after a cold power-up.
+
+Neither vendor program sets the loopback, which is why this is listed as an open
+question below.
+
+## The MPU-401
+
+- In UART mode, status bit 0x80 (DRR) means a byte is waiting, bit 0x40 (DSR)
+  means the card is not ready for another one.
+- The card answers `0xFE` to the `0x3F` (enter UART) and `0xFF` (reset)
+  commands — but not always, and not quickly. Measured behaviour: replies can
+  arrive hundreds of milliseconds late, and a read that happened earlier can
+  leave a stale `0xFE` in the buffer.
+- **Do not reset the MPU when opening the device.** `0xFF` puts an MPU-401 into
+  *intelligent* mode, where bytes that look like MIDI are interpreted as
+  commands; if the following `0x3F` is lost the card stays there and silently
+  discards every note. This cost a whole debugging session: the byte counters
+  kept growing while the card was mute.
+- If re-initialisation is ever needed, the vendor order is: wait for DSR,
+  `0x3F`, wait for the `0xFE` acknowledgement, then `0xFF`.
+
+## MIDI input
+
+Documented as unavailable, and the reasoning is worth recording:
+
+- the card never raises DRR on the read side: identity requests, RQ1, GS reset
+  and note traffic all produce zero bytes;
+- it does acknowledge MPU *commands*, so the card→host path exists but carries
+  no MIDI;
+- the Windows 95 VxD imports **no VPICD service**, i.e. it virtualises no
+  interrupt at all, so even the vendor did not implement interrupt-driven MIDI
+  input for this card.
+
+The 13-byte RQ1 both vendor programs send (`F0 41 10 42 11 4F 40 00 00 00 01 70
+F7`) is a request that this card, as far as we can tell, never answers.
+
+## Codec register bank
+
+The Windows VxD writes, beyond `0x02`–`0x07`:
+
+    ah=0x0C al=0xC0   (then verifies (in al,dx & 0xC0) == 0xC0)
+    ah=0x49 al=0xC8
+    ah=0x10 al=0xC0
+
+`0x49` does not exist in a plain CS4231A register map, which suggests the card's
+codec exposes an **indirect bank** (`0x10` acting as the door). This is the
+missing half of the mixer map and the reason the `SOUND.INI` controls could not
+be matched one to one. Not yet explored.
 
 ## Procfs interfaces
 
-- `/proc/scp55` — one-line status; writing `1` sends a short test phrase.
+- `/proc/scp55` — status (I/O base, codec state, signature, chip id); writing
+  `1` sends a short test phrase to the synth.
 - `/proc/scp55mix` — `w <hex idx> <hex val>` write a codec register,
   `r <hex idx>` read it, `i` apply the unmute defaults, `u` mute both
   channels.
 
-## Known limitations / open questions
+## Module parameters
 
-- No module alias for autoload: the module is loaded by hand (`modprobe scp55`)
-  or from a startup script. Detecting the card through its PCMCIA CIS and
-  emitting a `MODULE_ALIAS` would remove that step.
-- Suspend/resume is untested. The socket programming is done at init only.
-- The sequencer port name is fixed; if you have two cards, they will look
-  identical.
-- Only the MPU-401 UART mode is implemented. The card's "intelligent" mode is
-  not documented publicly and is not used.
-- Tested with kernel 6.1; the code uses plain `inb`/`outb` and the ALSA
-  rawmidi API, so it should port to nearby versions, but this is unverified.
+| parameter | default | what it does |
+|---|---|---|
+| `beep_on_probe` | 1 | play the test phrase when the card is probed |
+| `reset_on_open` | 0 | send a GS reset and all-notes-off on open; off because clients that open and close the port repeatedly turn it into a stream of resets that wipes playback |
+| `mpu_init_on_open` | 0 | re-initialise the MPU-401 on open; off because the card is already in UART mode after power-on, and a lost command leaves it in intelligent mode |
 
-## Notes
+## Open questions
 
-The card is silent, not broken, when the codec is muted. Several hours were
-spent looking for a fault that did not exist: if you hear nothing, check
-`/proc/scp55` first, then `/proc/scp55mix`.
+1. Does the vendor control sequence (`base+4`/`base+5`) make the loopback
+   unnecessary when applied to a **cold** card? It must be tested right after
+   power-on, before the codec is touched. Applying it to a running card silences
+   it.
+2. What is the indirect codec bank, and does it expose a real mixer we can
+   model as ALSA controls instead of the current procfs escape hatch?
+3. What is `base+10` for?
+4. Suspend/resume: on the test machine the PCMCIA bridge times out after
+   resume and the card disappears from the bus. Reloading `yenta_socket`
+   brings it back, but audio does not return without a real power cycle.
+
+## Reproducing the analysis
+
+The driver disk can be unpacked without running it:
+
+    unzip -o scp-55.exe -d scp55win
+
+`SCPENA.EXE` is a DOS MZ image; `SCP95.VXD` is a 32-bit LE VxD. The method
+used to read both, and the sequences recovered from them, are in
+[vendor-init-sequence.md](vendor-init-sequence.md).

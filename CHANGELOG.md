@@ -2,6 +2,21 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.2.0 — 2026-10-28
+
+- **card identification by signature**: after power-on the card answers `0xAA`
+  at `base+5`. Both vendor programs rely on it (`SCPENA.EXE` 0x29ae,
+  `SCP95.VXD` 0x29b5) after selecting the register with a write to `base+4`;
+  at probe nothing has touched those ports yet, so the driver only *reads* it.
+  A read cannot put the card in a wrong mode, a write demonstrably can: applying
+  the full vendor sequence to an already running card silenced it until reboot
+- `/proc/scp55` now reports the signature and says whether the card is
+  confirmed
+- reverse engineering written up in `docs/vendor-init-sequence.md`: how to
+  unpack and disassemble the original disk, the full vendor init sequence, the
+  control register pair at `base+4`/`base+5`, and the indirect codec bank that
+  the Windows VxD uses
+
 ## 0.1.9 — 2026-10-28
 
 - **the MPU is no longer reset on every open**: `mpu_init()` sent `0xFF` (which

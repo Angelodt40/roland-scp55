@@ -121,6 +121,17 @@ static u8 cc_get(u8 idx)
 	return inb(io_base + 9);
 }
 
+/* The card answers its own signature: after power-on base+5 reads 0xAA
+ * (SCPENA.EXE writes 0 to base+4 first, SCP95.VXD does the same in its
+ * identify routine). At probe time nothing has touched those ports yet, so a
+ * plain read is enough - and a read cannot put the card into a wrong mode,
+ * which a write to base+4/base+5 demonstrably can.
+ */
+static int card_signature(void)
+{
+	return inb(io_base + 5);
+}
+
 static void beep(void)
 {
 	static const u8 gs[] = { 0xf0,0x41,0x10,0x42,0x12,0x40,0x00,0x7f,0x00,0x41,0xf7 };
@@ -607,7 +618,7 @@ static int scp55_conf_check(struct pcmcia_device *link, void *priv)
 static int scp55_probe(struct pcmcia_device *link)
 {
 	unsigned int base;
-	u8 aux1;
+	u8 aux1, signature;
 	int ret;
 
 	io_base = 0;
@@ -639,6 +650,7 @@ static int scp55_probe(struct pcmcia_device *link)
 
 	codec_init();
 	aux1 = cc_get(0x02);
+	signature = card_signature();
 	proc_create("scp55", 0666, NULL, &status_ops);
 	proc_create("scp55mix", 0666, NULL, &mix_ops);
 
@@ -651,9 +663,12 @@ static int scp55_probe(struct pcmcia_device *link)
 
 	snprintf(status, sizeof(status),
 		 "SCP-55 ready\n  io base   : 0x%03x\n  codec     : %s (aux1 L 0x%02x)\n"
-		 "  chip id   : 0x%02x\n  rawmidi   : /dev/snd/midiC%dD0 (%s)\n"
+		 "  signature : 0x%02x (%s)\n  chip id   : 0x%02x\n"
+		 "  rawmidi   : /dev/snd/midiC%dD0 (%s)\n"
 		 "  sequencer : port \"Roland SCP-55\"\n",
-		 base, codec_ok ? "unmuted" : "no answer", aux1, cc_get(0x0c),
+		 base, codec_ok ? "unmuted" : "no answer", aux1,
+		 signature, signature == 0xaa ? "SCP-55 confirmed" : "unexpected",
+		 cc_get(0x0c),
 		 card ? card->number : -1,
 		 rmidi ? "registered" : "missing");
 
@@ -759,4 +774,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.9");
+MODULE_VERSION("0.2.0");

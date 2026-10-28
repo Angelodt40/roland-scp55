@@ -21,6 +21,16 @@ Questions, bug reports and results from other machines: please open an
 [issue](https://github.com/Angelodt40/roland-scp55/issues). That is the
 preferred channel — the maintainer does not publish an email address.
 
+## What works, what does not
+
+Working: the synth plays anything sent to the ALSA sequencer port, including
+`aplaymidi` and Rosegarden, and the card is identified by its own signature.
+
+Not working, with reasons in [docs/hardware.md](docs/hardware.md): MIDI **input**
+(the card never transmits, and the vendor VxD imports no VPICD service either),
+a native ALSA mixer (the codec exposes an indirect register bank we have not
+mapped yet), and reliable resume from suspend on the test machine.
+
 ## What the card is
 
 The SCP-55 is a PC Card (16-bit PCMCIA) version of the Roland Sound Canvas
@@ -33,14 +43,21 @@ that "does nothing" is usually not broken, just silent.
 
 1. On load, the driver locates the card's PCMCIA function and programs the
    socket registers so the MPU-401 UART is reachable at I/O base `0x330`.
-2. It un-mutes the CS4231A codec, which the synth's output runs through.
-   Without this step the card accepts MIDI and produces nothing audible.
-3. It registers an ALSA rawmidi device; the sequencer port appears as
+2. It identifies the card: after power-on the card answers `0xAA` at `base+5`,
+   and the driver checks that signature before trusting anything else. This is
+   the same test the original Roland enabler performs.
+3. It brings up the CS4231A codec the synth's audio runs through: input gains,
+   DAC attenuation, and the **ADC to DAC loopback** without which the card is
+   silent even when every status register says it is healthy.
+4. It registers an ALSA rawmidi device; the sequencer port appears as
    `Roland SCP-55` in `aplaymidi -l`.
-4. It initialises the MPU-401 into UART mode: a reset command and a UART-mode
-   command, each acknowledged by the card with `0xFE`. Without this step the card
-   keeps a stale byte sitting in its read path.
-5. Two procfs interfaces give you control without extra tools:
+5. It deliberately leaves the MPU-401 alone. The card is already in UART mode
+   after power-on; re-initialising it on every open sends `0xFF`, which puts an
+   MPU-401 into *intelligent* mode, and if the following `0x3F` is lost the card
+   silently discards every note. The order the vendor uses, for the case where
+   re-initialisation is really needed, is in
+   [docs/vendor-init-sequence.md](docs/vendor-init-sequence.md).
+6. Two procfs interfaces give you control without extra tools:
    - `/proc/scp55` — status; `echo 1 > /proc/scp55` sends a test phrase
    - `/proc/scp55mix` — live codec mixer: `w <hex idx> <hex val>`,
      `r <hex idx>`, `i` (unmute defaults), `u` (mute both channels)
@@ -70,7 +87,7 @@ Three options, from least work to most control.
 Download the `.deb` from the [releases page](https://github.com/Angelodt40/roland-scp55/releases)
 and install it. It builds itself through DKMS, so kernel updates are handled:
 
-    sudo apt install ./scp55-dkms_0.1.3-1_all.deb
+    sudo apt install ./scp55-dkms_0.2.0-1_all.deb
 
 ### 2. From the repository, one command
 
@@ -90,11 +107,11 @@ up when it is present, including after a reboot.
 DKMS rebuilds the module automatically after a kernel update. Copy only what
 the build needs — not the whole working tree:
 
-    sudo mkdir -p /usr/src/scp55-0.1.3
-    sudo cp -r src dkms.conf /usr/src/scp55-0.1.3/
-    sudo dkms add -m scp55 -v 0.1.3
-    sudo dkms build -m scp55 -v 0.1.3
-    sudo dkms install -m scp55 -v 0.1.3 --force
+    sudo mkdir -p /usr/src/scp55-0.2.0
+    sudo cp -r src dkms.conf /usr/src/scp55-0.2.0/
+    sudo dkms add -m scp55 -v 0.2.0
+    sudo dkms build -m scp55 -v 0.2.0
+    sudo dkms install -m scp55 -v 0.2.0 --force
     sudo depmod -a
 
 ### Without DKMS
