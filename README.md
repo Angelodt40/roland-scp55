@@ -63,7 +63,9 @@ and install it. It builds itself through DKMS, so kernel updates are handled:
 
 The script uses DKMS when it is available and falls back to a direct module
 install; it also installs the udev rule and sends the test phrase, so you
-know immediately whether the card answers.
+know immediately whether the card answers. There is no manual loading step:
+with the module installed, the card is picked up when it is present, including
+after a reboot.
 
 ## Install with DKMS (recommended for kernels that update)
 
@@ -143,10 +145,11 @@ before you spend an evening on it:
 - suspend/resume — the socket is programmed at load time and not restored
 - kernels other than 6.x — the code uses plain inb/outb and the ALSA rawmidi
   API, so it should port, but nobody has tried
-- automatic loading — the module advertises a PCMCIA modalias
-  (`pcmcia:mC00Cc0001...`), so inserting the card should load it once the module
-  is installed and `depmod` has run; this has not been verified with a cold boot
-  and a card insertion, so treat it as expected rather than proven
+- automatic loading — **verified**: with the module installed through DKMS and
+  `depmod` run, a reboot with the card inserted loads `scp55` and creates the
+  sequencer port without any manual `modprobe` (Panasonic CF-30, MX-23.6,
+  kernel 6.1.0-54-686-pae). The module advertises a PCMCIA modalias
+  (`pcmcia:mC00Cc0001...`), which is what makes this work
 - two cards in one machine — the sequencer port name is fixed
 
 Reports from other hardware are the most useful thing you can contribute.
