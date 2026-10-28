@@ -59,6 +59,8 @@ static DEFINE_MUTEX(io_mutex);
 static DEFINE_SPINLOCK(state_lock);
 static bool pending_reset, pending_panic;
 static unsigned int reset_open_count, reset_close_count, tx_byte_count;
+
+static void mpu_init(void);
 module_param(beep_on_probe, int, 0444);
 
 static struct pcmcia_device_id scp55_ids[] = {
@@ -268,6 +270,7 @@ static void tx_work_fn(struct work_struct *w)
 	}
 
 	if (do_reset && reset_on_open) {
+		mpu_init();
 		send_gs_reset();
 		spin_lock_irqsave(&state_lock, flags);
 		reset_open_count++;
@@ -562,8 +565,6 @@ static int scp55_probe(struct pcmcia_device *link)
 	cc_put(0x04, 0x08); cc_put(0x05, 0x08);
 	aux1 = cc_get(0x02);
 	codec_ok = ((aux1 & 0x1f) == 0x08);
-
-	mpu_init();
 	proc_create("scp55", 0666, NULL, &status_ops);
 	proc_create("scp55mix", 0666, NULL, &mix_ops);
 
@@ -618,12 +619,57 @@ static void scp55_remove(struct pcmcia_device *link)
 	pcmcia_disable_device(link);
 	scp_dev = NULL;
 }
+/* ---- power management ---- */
+static int scp55_suspend(struct pcmcia_device *link)
+{
+	cancel_delayed_work_sync(&rx_work);
+	cancel_delayed_work_sync(&tx_work);
+
+	mutex_lock(&io_mutex);
+	if (io_base)
+		send_panic();
+	mutex_unlock(&io_mutex);
+
+	pr_info(DRV_NAME ": suspended\n");
+	return 0;
+}
+
+static int scp55_resume(struct pcmcia_device *link)
+{
+	int ret;
+
+	ret = pcmcia_enable_device(link);
+	if (ret) {
+		pr_err(DRV_NAME ": resume: pcmcia_enable_device failed: %d\n", ret);
+		return ret;
+	}
+
+	mutex_lock(&io_mutex);
+	io_base = link->resource[0]->start;
+
+	/* the codec is muted again after a power cycle: unmute it, then put
+	 * the MPU-401 back into UART mode, exactly as probe does
+	 */
+	cc_put(0x06, 0x00); cc_put(0x07, 0x00);
+	cc_put(0x02, 0x08); cc_put(0x03, 0x08);
+	cc_put(0x04, 0x08); cc_put(0x05, 0x08);
+	codec_ok = ((cc_get(0x02) & 0x1f) == 0x08);
+	mpu_init();
+	mutex_unlock(&io_mutex);
+
+	pr_info(DRV_NAME ": resumed, io 0x%03x, codec %s\n",
+		io_base, codec_ok ? "ok" : "silent");
+	return 0;
+}
+
 static struct pcmcia_driver scp55_driver = {
 	.owner		= THIS_MODULE,
 	.name		= DRV_NAME,
 	.id_table	= scp55_ids,
 	.probe		= scp55_probe,
 	.remove		= scp55_remove,
+	.suspend	= scp55_suspend,
+	.resume		= scp55_resume,
 };
 
 static int __init scp55_init(void)
@@ -641,4 +687,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.5");
+MODULE_VERSION("0.1.6");

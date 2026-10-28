@@ -2,6 +2,18 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.6 — 2026-10-28
+
+- **suspend/resume callbacks**: suspend stops the work queues and sends
+  all-notes-off; resume re-programmes the codec and re-initialises the MPU-401 in
+  UART mode. Both log a line in dmesg
+- **MPU initialisation moved to first use**: at probe the card is not ready yet
+  and the commands went unacknowledged, which produced misleading warnings in
+  the log. The reset and UART-mode commands now run just before the first note
+- **packaging/99-scp55-socket**: a pm-utils hook for machines whose PCMCIA bridge
+  times out after resume and loses the card, as on the tested CF-30. It reloads
+  the bridge and the driver, with retries, and logs to /tmp/scp55-resume.log
+
 ## 0.1.5 — 2026-10-28
 
 - **MPU-401 initialisation**: the driver now sends the reset command (`0xFF`) and the

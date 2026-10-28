@@ -1,0 +1,32 @@
+#!/bin/sh
+# Reload the PCMCIA bridge after resume on machines whose socket controller
+# times out and loses the card (seen on a Panasonic CF-30). Right after resume
+# the bridge is not ready yet, so this waits and retries; the driver re-probes
+# by itself once the socket sees the card again.
+LOG=/tmp/scp55-resume.log
+
+case "$1" in
+  resume|thaw)
+    (
+      : > "$LOG"
+      echo "$(date '+%H:%M:%S') resume: attendo che il bridge si assesti" >> "$LOG"
+      sleep 8
+      for attempt in 1 2 3 4 5; do
+        modprobe -r scp55 2>/dev/null
+        modprobe -r yenta_socket 2>/dev/null
+        sleep 2
+        modprobe yenta_socket 2>/dev/null
+        sleep 4
+        if [ -e /sys/bus/pcmcia/devices/0.0 ]; then
+          modprobe scp55 2>/dev/null
+          echo "$(date '+%H:%M:%S') tentativo $attempt: scheda rilevata, driver caricato" >> "$LOG"
+          exit 0
+        fi
+        echo "$(date '+%H:%M:%S') tentativo $attempt: scheda non rilevata, riprovo" >> "$LOG"
+        sleep 8
+      done
+      echo "$(date '+%H:%M:%S') arreso dopo 5 tentativi" >> "$LOG"
+    ) >/dev/null 2>&1 &
+    ;;
+esac
+exit 0

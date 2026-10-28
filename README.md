@@ -164,6 +164,28 @@ MT-32 emulator (Munt).
 If instead you want to boot real MS-DOS on the machine and drive the card
 natively, the card needs a DOS-side enabler: see Related work below.
 
+## Suspend and resume
+
+The driver implements suspend and resume: on suspend it stops the work queues and
+sends all-notes-off, and on resume it re-programmes the codec and puts the
+MPU-401 back into UART mode. Both log one line in `dmesg`.
+
+On the tested Panasonic CF-30 that is not enough, because the PCMCIA bridge
+itself fails after resume:
+
+    pcmcia_socket0: time out after reset
+
+When that happens the card disappears from the bus and no driver can find it —
+the socket has lost it. Reloading the bridge brings it back. The repository
+ships `packaging/99-scp55-socket`, a pm-utils hook that waits for the bridge to
+settle, reloads `yenta_socket` and the driver, and retries up to five times:
+
+    sudo install -m755 packaging/99-scp55-socket /etc/pm/sleep.d/99-scp55-socket
+
+It writes what happened to `/tmp/scp55-resume.log`. Without the hook the card is
+unavailable until the next reboot; results on other machines may differ, and
+reports are welcome.
+
 ## Status of testing
 
 Verified on one machine only (details above). What is not verified, and worth
