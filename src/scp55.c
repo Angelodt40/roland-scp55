@@ -824,8 +824,11 @@ static int scp55_resume(struct pcmcia_device *link)
 	 * resumed machine had working MIDI and a silent synth: the codec came
 	 * up healthy, but the synth never reached the DAC.
 	 */
-	card_control_init();
+	/* Read the signature before any write: both the control handshake and
+	 * the mode selection overwrite base+5, and with it the 0xAA.
+	 */
 	signature = card_signature();
+	card_control_init();
 	if (card_mode)
 		card_mode_select();
 	codec_init();
@@ -862,4 +865,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.5");
+MODULE_VERSION("0.2.6");
