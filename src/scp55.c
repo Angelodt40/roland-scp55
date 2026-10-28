@@ -184,6 +184,67 @@ static void beep_locked(void)
 	mutex_unlock(&io_mutex);
 }
 
+/* ---- MIDI input: MPU-401 UART receive ---- */
+static struct snd_rawmidi_substream *rx_sub;
+static bool rx_running;
+static struct delayed_work rx_work;
+
+static void rx_work_fn(struct work_struct *w)
+{
+	unsigned char buf[64];
+	struct snd_rawmidi_substream *sub;
+	unsigned long flags;
+	bool again;
+	int n = 0;
+
+	spin_lock_irqsave(&state_lock, flags);
+	sub = rx_sub;
+	spin_unlock_irqrestore(&state_lock, flags);
+	if (!sub)
+		return;
+
+	mutex_lock(&io_mutex);
+	if (io_base) {
+		/* DRR (bit 7) stays set while the UART holds a byte for us */
+		while (n < (int)sizeof(buf) && (inb(io_base + 1) & 0x80))
+			buf[n++] = inb(io_base);
+	}
+	mutex_unlock(&io_mutex);
+
+	if (n)
+		snd_rawmidi_receive(sub, buf, n);
+
+	spin_lock_irqsave(&state_lock, flags);
+	again = rx_running && rx_sub;
+	spin_unlock_irqrestore(&state_lock, flags);
+
+	if (again)
+		schedule_delayed_work(&rx_work, msecs_to_jiffies(1));
+}
+
+static int in_open(struct snd_rawmidi_substream *substream) { return 0; }
+static int in_close(struct snd_rawmidi_substream *substream) { return 0; }
+
+static void in_trigger(struct snd_rawmidi_substream *substream, int up)
+{
+	unsigned long flags;
+
+	/* Atomic context: flag and schedule only. */
+	spin_lock_irqsave(&state_lock, flags);
+	rx_sub = up ? substream : NULL;
+	rx_running = up ? true : false;
+	spin_unlock_irqrestore(&state_lock, flags);
+
+	if (up)
+		schedule_delayed_work(&rx_work, 0);
+}
+
+static const struct snd_rawmidi_ops in_ops = {
+	.open		= in_open,
+	.close		= in_close,
+	.trigger	= in_trigger,
+};
+
 static void tx_work_fn(struct work_struct *w)
 {
 	unsigned char c;
@@ -382,6 +443,38 @@ static const struct proc_ops mix_ops = {
 	.proc_write	= mix_write,
 };
 
+/* ---- MPU-401 UART initialisation ---- */
+static int mpu_wait_read(u8 *out, int ms)
+{
+	int i;
+
+	for (i = 0; i < ms * 100; i++) {
+		if (inb(io_base + 1) & 0x80) {
+			*out = inb(io_base);
+			return 1;
+		}
+		udelay(10);
+	}
+	return 0;
+}
+
+static void mpu_init(void)
+{
+	u8 ack = 0;
+
+	/* Reset, then switch to UART mode; each command is acknowledged with
+	 * 0xFE. Without this the card keeps a stale byte in its read path and
+	 * the receive side returns the same value forever.
+	 */
+	outb(0xff, io_base + 1);
+	if (!mpu_wait_read(&ack, 100) || ack != 0xfe)
+		pr_info(DRV_NAME ": MPU reset not acknowledged (%#04x)\n", ack);
+
+	outb(0x3f, io_base + 1);
+	if (!mpu_wait_read(&ack, 100) || ack != 0xfe)
+		pr_info(DRV_NAME ": UART mode not acknowledged (%#04x)\n", ack);
+}
+
 static int card_setup(struct pcmcia_device *link)
 {
 	int err;
@@ -396,17 +489,21 @@ static int card_setup(struct pcmcia_device *link)
 	snprintf(card->longname, sizeof(card->longname),
 		 "Roland SCP-55 Sound Canvas (PCMCIA) at 0x%03x", io_base);
 
-	err = snd_rawmidi_new(card, "SCP-55 MIDI", 0, 1, 0, &rmidi);
+	err = snd_rawmidi_new(card, "SCP-55 MIDI", 0, 1, 1, &rmidi);
 	if (err < 0) {
 		snd_card_free(card);
 		card = NULL;
 		return err;
 	}
 	strcpy(rmidi->name, "SCP-55");
-	rmidi->info_flags = SNDRV_RAWMIDI_INFO_OUTPUT;
+	rmidi->info_flags = SNDRV_RAWMIDI_INFO_INPUT |
+			    SNDRV_RAWMIDI_INFO_OUTPUT |
+			    SNDRV_RAWMIDI_INFO_DUPLEX;
 	snd_rawmidi_set_ops(rmidi, SNDRV_RAWMIDI_STREAM_OUTPUT, &out_ops);
+	snd_rawmidi_set_ops(rmidi, SNDRV_RAWMIDI_STREAM_INPUT, &in_ops);
 
 	INIT_DELAYED_WORK(&tx_work, tx_work_fn);
+	INIT_DELAYED_WORK(&rx_work, rx_work_fn);
 
 	err = snd_card_register(card);
 	if (err < 0) {
@@ -466,6 +563,7 @@ static int scp55_probe(struct pcmcia_device *link)
 	aux1 = cc_get(0x02);
 	codec_ok = ((aux1 & 0x1f) == 0x08);
 
+	mpu_init();
 	proc_create("scp55", 0666, NULL, &status_ops);
 	proc_create("scp55mix", 0666, NULL, &mix_ops);
 
@@ -497,9 +595,10 @@ static void scp55_remove(struct pcmcia_device *link)
 	remove_proc_entry("scp55mix", NULL);
 	remove_proc_entry("scp55", NULL);
 
-	/* Stop the work first, then wait for any in-flight register access
+	/* Stop both directions, then wait for any in-flight register access
 	 * before the card goes away underneath it.
 	 */
+	cancel_delayed_work_sync(&rx_work);
 	cancel_delayed_work_sync(&tx_work);
 	mutex_lock(&io_mutex);
 	io_base = 0;
@@ -507,6 +606,8 @@ static void scp55_remove(struct pcmcia_device *link)
 
 	spin_lock_irq(&state_lock);
 	tx_sub = NULL;
+	rx_sub = NULL;
+	rx_running = false;
 	spin_unlock_irq(&state_lock);
 
 	if (card) {
@@ -540,4 +641,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.4");
+MODULE_VERSION("0.1.5");

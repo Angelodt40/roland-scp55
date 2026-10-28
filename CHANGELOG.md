@@ -2,6 +2,20 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.5 — 2026-10-28
+
+- **MPU-401 initialisation**: the driver now sends the reset command (`0xFF`) and the
+  UART-mode command (`0x3F`) to the command port at probe, checking the `0xFE`
+  acknowledgement and logging when the card does not answer. Without this the
+  card kept a stale byte in its read path: the receive side read the same value
+  forever, which is how the bug was found
+- **MIDI input**: a duplex rawmidi stream with a polling workqueue. Implemented
+  and compiled, but unverified: on the test hardware the card never transmitted
+  anything, including in response to GM identity and GS RQ1 dump requests. The
+  receive line appears not to be wired on this interface
+- transmission re-verified after the initialisation change: notes still play and
+  the byte counters advance
+
 ## 0.1.4 — 2026-10-28
 
 - **no more stuck notes**: a GS reset plus all-notes-off on all 16 channels is

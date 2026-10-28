@@ -37,7 +37,10 @@ that "does nothing" is usually not broken, just silent.
    Without this step the card accepts MIDI and produces nothing audible.
 3. It registers an ALSA rawmidi device; the sequencer port appears as
    `Roland SCP-55` in `aplaymidi -l`.
-4. Two procfs interfaces give you control without extra tools:
+4. It initialises the MPU-401 into UART mode: a reset command and a UART-mode
+   command, each acknowledged by the card with `0xFE`. Without this step the card
+   keeps a stale byte sitting in its read path.
+5. Two procfs interfaces give you control without extra tools:
    - `/proc/scp55` — status; `echo 1 > /proc/scp55` sends a test phrase
    - `/proc/scp55mix` — live codec mixer: `w <hex idx> <hex val>`,
      `r <hex idx>`, `i` (unmute defaults), `u` (mute both channels)
@@ -113,6 +116,23 @@ Or with the helper script, which finds the port itself:
 
 In a DAW (Rosegarden, Qtractor) just select `Roland SCP-55` as the MIDI output
 device; the connection is made by ALSA, nothing to configure.
+
+## MIDI input
+
+The device is duplex: a rawmidi input stream is registered next to the output
+one, and a polling workqueue drains whatever the card has to send.
+
+**On the tested hardware it never sends anything.** Tested with the driver and
+directly against the ports, bypassing the driver entirely: a GM identity
+request, a GS RQ1 dump request, a GS reset and ordinary notes all produced zero
+bytes back, with the MPU status register staying at `0x00` — no data-ready flag,
+ever. The card answers MPU-401 commands (`0xFF` and `0x3F` are acknowledged with
+`0xFE`), so the receive path itself is alive; the card simply does not transmit
+on this PCMCIA interface.
+
+The input support is kept because it costs little and should work on any other
+MPU-401-compatible device behind the same driver. Treat it as unverified, and if
+your card does send data, that is worth reporting.
 
 ## Troubleshooting
 
