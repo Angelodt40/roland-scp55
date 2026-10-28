@@ -45,6 +45,15 @@ that "does nothing" is usually not broken, just silent.
    - `/proc/scp55mix` — live codec mixer: `w <hex idx> <hex val>`,
      `r <hex idx>`, `i` (unmute defaults), `u` (mute both channels)
 
+## Releases and versions
+
+A tag is not a release. Versions are marked **pre-release** until the `.deb`
+has been built and the driver has been tried on real hardware — the card is
+old enough that a change which compiles cleanly can still wedge the machine
+(0.1.7 did exactly that). A build that has not been heard making sound is not
+ready. Flip the release to stable only after that, and write down what you
+verified.
+
 ## Requirements
 
 - A laptop with a 16-bit PCMCIA slot (CardBus-only slots are not enough) and
