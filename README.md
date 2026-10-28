@@ -224,6 +224,7 @@ current CI state.
     udev/99-scp55.rules   permissions for the raw MIDI device
     scripts/              helper to play files
     docs/hardware.md      what is known about the card, and open questions
+    docs/windows-driver.md what the original Roland driver disk reveals
     experiments/          earlier variants (play/midi/beep), not maintained
     .github/workflows/    CI: compile matrix, package on tag
     CHANGELOG.md          release notes
@@ -244,6 +245,15 @@ places and they must match:
 Releasing means: bump those three, add an entry to `CHANGELOG.md`, commit, then
 `git tag -a vX.Y.Z -m "scp55 X.Y.Z"` and `git push --tags`. CI builds the .deb
 on the tag and attaches it to the release.
+
+## The original Windows drivers
+
+The vendor driver disk for this card survives as a self-extracting archive, and
+it states things that took experimentation to find here: the card's I/O window is
+0x330-0x33B (twelve ports, not two), it declares IRQ 5, and the Windows driver
+writes a much larger mixer table than the four registers this driver touches.
+What is inside it, and what is still unexplored, is written up in
+[docs/windows-driver.md](docs/windows-driver.md).
 
 ## Related work and thanks
 
