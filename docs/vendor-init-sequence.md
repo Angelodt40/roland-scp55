@@ -416,3 +416,32 @@ The middle row is what cost version 0.2.0 its loopback workaround: unmuting
 the inputs is not enough on its own. The last row is the card doing what it was
 designed to do, and the driver now selects it at probe (`card_mode=1`), so the
 loopback is no longer used by default.
+
+## Measured on hardware: the handshake is what makes the MPU answer (2026-10-28)
+
+Writing the sequence by hand on the CF-30 (`scripts/scp55-vendor-probe.sh`, root,
+`/dev/port`) settled the question the disassembly left open:
+
+```
+get 0x334 '<-' 2 ; 0x335 '<-' 1 ; wait until 0x335 reads 0 ; 0x33A '<-' 0
+get 0x331 '<-' 0x3F ; read 0x330   ->  0xFE      # the acknowledgement
+```
+
+Without that handshake `0x3F` is **never** acknowledged: the driver waits, the
+card answers nothing, the fallback `0xFF` leaves the synth deaf, and `dmesg`
+says `MPU-401 still silent`. With it, the same `0x3F` returns `0xFE` and the
+card plays — measured at -15 dB on a held C4-E4-G4 chord.
+
+So the rule for the driver is: **never call `mpu_init()` without
+`card_control_init()` in front of it**. `mpu_init()` without the handshake is
+not merely useless, it is harmful — it ends with a `0xFF` that silences the
+card until the next power cycle. 0.2.5 and 0.2.6 broke exactly that way, by
+initialising the MPU at probe time.
+
+What is still unknown: the same sequence did not work twice in a row. After a
+module reload the identical steps returned `0` instead of `0xFE` and the card
+stayed silent. The handshake is necessary but not sufficient, and the state the
+socket leaves the card in after a power-on decides the outcome. That is what
+`scripts/scp55-vendor-probe.sh` is for: it prints what the card answers after
+each step, so the next session can find which step is the one that matters
+rather than guessing.
