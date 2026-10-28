@@ -292,9 +292,9 @@ static void tx_work_fn(struct work_struct *w)
 		return;
 	}
 
+	if (do_reset && mpu_init_on_open)
+		mpu_init();
 	if (do_reset && reset_on_open) {
-		if (mpu_init_on_open)
-			mpu_init();
 		send_gs_reset();
 		spin_lock_irqsave(&state_lock, flags);
 		reset_open_count++;
@@ -485,6 +485,32 @@ static const struct proc_ops mix_ops = {
  * Verified on hardware 2026-10-28: with 0x0E = 0x02 the test phrase is
  * audible, with 0x0E = 0x00 the card is silent.
  */
+/* ---- the vendor's control-interface handshake ----
+ * SCPENA.EXE and the Windows VxD both program the card's control pair
+ * (base+4 select, base+5 value) before they touch the MPU: selector 2, value
+ * 1, then they wait until base+5 reads back zero. After a suspend the card
+ * comes back deaf to MPU commands - 0x3F and 0xFF both go unanswered, which
+ * prints as "MPU-401 still silent" - and this is the step our resume was
+ * missing. The vendor also zeroes base+10 (0x33A) in the same routine.
+ */
+static void card_control_init(void)
+{
+	int i;
+
+	outb(0x02, io_base + 4);
+	udelay(50);
+	outb(0x01, io_base + 5);
+	udelay(50);
+	for (i = 0; i < 1000; i++) {
+		outb(0x02, io_base + 4);
+		udelay(20);
+		if (!inb(io_base + 5))
+			break;
+		udelay(100);
+	}
+	outb(0x00, io_base + 10);
+}
+
 /* Select the card's audio routing. The vendor wave path writes 3 to the
  * control register and 1 to its neighbour before playing
  * (SCP95.DRV, segment 7) - with that mode the synth reaches the codec's DAC
@@ -704,8 +730,15 @@ static int scp55_probe(struct pcmcia_device *link)
 	pr_info(DRV_NAME ": io 0x%03x, codec %s, card %d\n",
 		base, codec_ok ? "ok" : "silent", card->number);
 
-	if (beep_on_probe)
+	if (beep_on_probe) {
+		/* The test phrase goes through the MPU: without UART mode the
+		 * card discards it and the probe looks silent when it is not.
+		 */
+		mutex_lock(&io_mutex);
+		mpu_init();
+		mutex_unlock(&io_mutex);
 		beep_locked();
+	}
 	return 0;
 }
 
@@ -791,6 +824,7 @@ static int scp55_resume(struct pcmcia_device *link)
 	 * resumed machine had working MIDI and a silent synth: the codec came
 	 * up healthy, but the synth never reached the DAC.
 	 */
+	card_control_init();
 	signature = card_signature();
 	if (card_mode)
 		card_mode_select();
@@ -828,4 +862,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.4");
+MODULE_VERSION("0.2.5");
