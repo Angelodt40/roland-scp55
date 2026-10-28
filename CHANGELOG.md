@@ -2,6 +2,15 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.8 — 2026-10-28
+
+- **bounded drain in mpu_init()**: 0.1.7 drained the MPU read register with an
+  unbounded loop. On this card DRR can stay high with a byte that never pops, so
+  the transmit workqueue never returned and every client that opened the port
+  hung: rosegarden froze on its splash screen and aplaymidi sent zero bytes.
+  The loop now reads at most eight times. The kernel warned with
+  `EIP: mpu_init ... Workqueue: events tx_work_fn`
+
 ## 0.1.7 — 2026-10-28
 
 - **the codec loopback was the missing piece**: the synth does not feed the

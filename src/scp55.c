@@ -501,11 +501,15 @@ static int mpu_wait_read(u8 *out, int ms)
 static void mpu_init(void)
 {
 	u8 ack = 0;
+	int i;
 
 	/* Drop whatever the card queued before we got here: a stale ACK left
 	 * in the read register makes every later command look unanswered.
+	 * The loop must stay bounded: on this card DRR can remain set with a
+	 * byte that never pops, and an unbounded read loop wedges the
+	 * workqueue (seen in 0.1.7, rosegarden froze solid on the splash).
 	 */
-	while (inb(io_base + 1) & 0x80)
+	for (i = 0; i < 8 && (inb(io_base + 1) & 0x80); i++)
 		inb(io_base);
 
 	/* Reset, then switch to UART mode; each command is acknowledged with
@@ -725,4 +729,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.7");
+MODULE_VERSION("0.1.8");
