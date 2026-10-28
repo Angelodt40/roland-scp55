@@ -1,0 +1,2 @@
+# Roland SCP-55: let the audio group use the raw MIDI device
+KERNEL=="midiC[0-9]*", SUBSYSTEM=="sound", GROUP="audio", MODE="0660"
