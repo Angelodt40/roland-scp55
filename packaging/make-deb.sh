@@ -49,12 +49,16 @@ EOF
 cat > "$STAGE/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
-if command -v dkms >/dev/null 2>&1; then
-  dkms add -m scp55 -v $VER 2>/dev/null || true
-  dkms build -m scp55 -v $VER || true
-  dkms install -m scp55 -v $VER --force || true
+export PATH=/usr/sbin:/sbin:\$PATH
+if ! command -v dkms >/dev/null 2>&1; then
+  echo "scp55: dkms not found. Install it (apt install dkms) and run:" >&2
+  echo "  dpkg --configure -a" >&2
+  exit 1
 fi
-depmod -a || true
+dkms add -m scp55 -v $VER 2>/dev/null || true
+dkms build -m scp55 -v $VER
+dkms install -m scp55 -v $VER --force
+depmod -a
 modprobe scp55 2>/dev/null || true
 if [ -e /proc/scp55 ] && [ "\$1" = "configure" ]; then
   echo "scp55 loaded. Test phrase:  echo 1 > /proc/scp55"

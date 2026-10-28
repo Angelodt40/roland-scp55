@@ -2,6 +2,15 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.1 — 2026-10-28
+
+- Fix the DKMS build: the module is produced in `src/`, so `dkms.conf` now sets
+  `BUILT_MODULE_LOCATION[0]="src"`. With 0.1.0 the compile succeeded but DKMS
+  could not find `scp55.ko` and refused to install it
+- `install.sh` and the package `postinst` no longer hide DKMS failures behind
+  `|| true`; a failed build now fails loudly instead of leaving a machine with
+  no module and no explanation
+
 ## 0.1.0 — 2026-10-28
 
 First public release.
