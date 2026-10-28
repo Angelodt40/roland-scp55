@@ -119,10 +119,11 @@ be matched one to one. Not yet explored.
 
 ## Open questions
 
-1. Does the vendor control sequence (`base+4`/`base+5`) make the loopback
-   unnecessary when applied to a **cold** card? It must be tested right after
-   power-on, before the codec is touched. Applying it to a running card silences
-   it.
+1. ~~Does the card mode make the loopback unnecessary?~~ **Answered:** yes.
+   `0x334 <- 3`, `0x335 <- 1` is the routing the vendor wave path selects, and
+   with it the card plays with the loopback register read back as `0x00`. The
+   driver now does this at probe. Applying the *full* vendor sequence with `4`
+   instead of `3` still silences a running card — that part remains a warning.
 2. What is the indirect codec bank, and does it expose a real mixer we can
    model as ALSA controls instead of the current procfs escape hatch?
 3. What is `base+10` for?

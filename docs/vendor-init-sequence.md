@@ -396,3 +396,23 @@ itself.
 Whether anything ever reads MIDI data from an interrupt is still open, and it is
 the next thing to trace: find which vector the driver hooks and what its handler
 does with the port.
+
+## The mode that replaces the loopback
+
+The wave path in segment 7 of `SCP95.DRV` writes `0x03` to the control register
+at `base+4` and `0x01` to its neighbour before playing. That is a *routing*
+selection, not a register value: with it the synth reaches the codec's DAC by
+the intended path.
+
+Measured on the card:
+
+| state | loopback `0x0E` | audible |
+|---|---|---|
+| mode 2/1 (enabler init), loopback closed | `0x02` | yes |
+| mode 2/1, loopback open | `0x00` | **no** |
+| mode 3/1, loopback open | `0x00` | **yes** |
+
+The middle row is what cost version 0.2.0 its loopback workaround: unmuting
+the inputs is not enough on its own. The last row is the card doing what it was
+designed to do, and the driver now selects it at probe (`card_mode=1`), so the
+loopback is no longer used by default.
