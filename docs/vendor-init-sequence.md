@@ -322,3 +322,37 @@ One earlier reading of the disassembly was wrong and is corrected here: the
 — the structure field they use points elsewhere, most likely to `base+8`, which
 would make them `0x33A`/`0x33B`. That is consistent with the enabler writing
 `0x00` to `0x33A` during its init sequence.
+
+
+## The card controller: 0x33A / 0x33B is a 64-register file
+
+The pair is not the codec, and it is not a plain register either. Measured:
+
+| write to `0x33A` | reads back |
+|---|---|
+| `0x10` | `0x10` |
+| `0x1F` | `0x1F` |
+| `0x29` | `0x29` |
+| `0x49` | `0x09` |
+| `0x80` | `0x00` |
+| `0xFF` | `0x3F` |
+
+So `0x33A` latches an index **masked to six bits** — a register file of 64
+entries — and `0x33B` is write-data / read-status. Reading `0x33B` after
+selecting index `0x0C` returns `0x02`, not the codec's `0x8A`, which is how we
+know the codec is a separate interface on `0x338`/`0x339`.
+
+That also explains the two "impossible" writes in `SCP95.VXD`: `0x49` and
+`0x10` are not codec registers at all. Masked, the vendor init becomes:
+
+    0x0C <- 0xC0
+    0x09 <- 0xC8      (the driver writes 0x49, the chip keeps 0x09)
+    0x10 <- 0xC0
+
+All three were replayed on the card, in that order, each followed by the test
+phrase, and the card stayed healthy throughout: the index latch held, the
+status byte stayed `0x02`, and the synth kept playing.
+
+What the three values *mean* is still unknown. They look like routing or clock
+selection rather than a mixer, and the way to find out is to read `SCP95.DRV`
+with the register file already identified — not to write guesses.
