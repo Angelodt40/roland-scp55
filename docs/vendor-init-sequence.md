@@ -285,3 +285,40 @@ real sound card.
    pointer, what starts and stops playback.
 3. Before touching the kernel module, prove it from user space: map the window,
    write a few frames, and see whether the card makes a noise.
+
+
+## Port map, measured on the card
+
+Twelve ports, all probed read-only unless stated. Values are from a card freshly
+powered up and then running the driver's probe.
+
+| port | behaviour | what it probably is |
+|---|---|---|
+| `0x330` | data, a stale `0x42` sat here for hours | MPU-401 data |
+| `0x331` | `0x80` = DRR set, `0xA0` after traffic | MPU-401 status |
+| `0x332` | moves in lockstep with `0x331` (`0x80` → `0xA0`) | mirror of the MPU status |
+| `0x333` | always read `00`, ignored the values written | unknown, not an index latch |
+| `0x334` | writable | mode selector |
+| `0x335` | `0xAA` cold = signature; `00`, `01` after the vendor sequence | signature / status |
+| `0x338` | codec index | CS4231A index |
+| `0x339` | codec data (`0x0C` → `0x8A`) | CS4231A data |
+| `0x33A` | writable register, keeps the value written | card control |
+| `0x33B` | `0x02` at rest, `0x00` after MIDI activity | card status |
+
+Experiments that produced this table (all reversible, each followed by a test
+phrase to confirm the card still played):
+
+- writing `0x00` to `0x332`: no observable change, so it is not a register
+  selector;
+- writing `0x0C` to `0x332` and reading `0x333`: returns `0x00`, while the
+  same index through `0x338`/`0x339` returns `0x8A` — so `0x332`/`0x333` is
+  **not** a second view of the codec;
+- writing `0x0C` and then `0x02` to `0x33A`: the value stays in `0x33A`
+  (`0x02`), which proves it is a plain register and not an index latch;
+- `0x33B` fell from `0x02` to `0x00` after the test phrase, twice.
+
+One earlier reading of the disassembly was wrong and is corrected here: the
+`base+2`/`base+3` accesses in `SCP95.DRV` are **not** relative to the I/O base
+— the structure field they use points elsewhere, most likely to `base+8`, which
+would make them `0x33A`/`0x33B`. That is consistent with the enabler writing
+`0x00` to `0x33A` during its init sequence.
