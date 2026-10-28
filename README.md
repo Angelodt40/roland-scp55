@@ -1,5 +1,7 @@
 # scp55 — Linux driver for the Roland SCP-55 "Sound Canvas" PC Card
 
+Copyright (C) 2026 Angelo Di Tomasso <angelo@ditomasso.it>
+
 Revive a 1995 Roland SCP-55 PCMCIA sound module on a modern Linux kernel.
 The module programs the card's socket, un-mutes the codec that sits between
 the synth and the line output, and exposes the MPU-401 UART as an ALSA
@@ -41,7 +43,21 @@ that "does nothing" is usually not broken, just silent.
 - Kernel headers for the running kernel, `gcc`, `make`.
 - `alsa-utils` for `aplaymidi`, and any MIDI player you like.
 
-## Install with DKMS (recommended)
+## Install
+
+Three ways, from laziest to most explicit.
+
+**One command, from the repository** (needs the kernel headers):
+
+    git clone https://github.com/Angelodt40/roland-scp55.git
+    cd roland-scp55
+    sudo ./install.sh
+
+The script uses DKMS when it is available and falls back to a direct module
+install; it also installs the udev rule and sends the test phrase, so you
+know immediately whether the card answers.
+
+## Install with DKMS (recommended for kernels that update)
 
 DKMS rebuilds the module automatically after a kernel update.
 
@@ -89,6 +105,51 @@ output device; the connection is made by ALSA, nothing to configure.
 | Port present, silence | codec muted — `echo i > /proc/scp55mix` |
 | Notes hang after Ctrl+C | send All Sound Off — `echo 1 > /proc/scp55`, or replay the file |
 | Card not detected | slot is CardBus-only, or the PCMCIA bridge needs `yenta_socket` |
+
+## Using it with DOSBox
+
+DOSBox (and DOSBox-X, DOSBox Staging) sends its MIDI output to any ALSA
+sequencer port, so MS-DOS games with General MIDI music can play through the
+card while the game runs on Linux:
+
+    [midi]
+    mididevice=alsa
+    midiconfig=24:0      # the client:port printed by aplaymidi -l
+
+Nothing else to configure: DOSBox connects to the same sequencer port the
+driver exposes.
+
+Set your expectations on one point: the SCP-55 is a General MIDI / GS device.
+Games written for the Roland MT-32 will play, but with the wrong instruments —
+that is a different synthesiser, not a configuration error. For those, use an
+MT-32 emulator (Munt).
+
+If instead you want to boot real MS-DOS on the machine and drive the card
+natively, the card needs a DOS-side enabler: see Related work below.
+
+## Status of testing
+
+Verified on one machine only (details above). Not verified, and worth knowing
+before you spend an evening on it:
+
+- suspend/resume — the socket is programmed at load time and not restored
+- kernels other than 6.x — the code uses plain inb/outb and the ALSA rawmidi
+  API, so it should port, but nobody has tried
+- automatic loading — there is no PCMCIA modalias, so `modprobe scp55` has to
+  be run by hand or from a startup script
+- two cards in one machine — the sequencer port name is fixed
+
+Reports from other hardware are the most useful thing you can contribute.
+
+## Related work and thanks
+
+- **zikolas/scp55-enabler** — a DOS enabler for the same card, C and assembly,
+  with three host backends (82365, Card Services, OmniBook ROM Socket
+  Services). Written independently, and it reaches the same conclusions about
+  the hardware: the card is 8-bit, the MPU status register sits at 0x331, the
+  codec data port at 0x339, and the codec must be un-muted before the synth is
+  audible. Those facts are stated here with confidence because their write-up
+  confirms them.
 
 ## What is in this repository
 

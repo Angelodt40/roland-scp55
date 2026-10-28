@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
+ * Copyright (C) 2026 Angelo Di Tomasso <angelo@ditomasso.it>
  * scp55 - Roland SCP-55 PCMCIA Sound Canvas driver
  *
  * Programs the socket (I/O base 0x330), un-mutes the CS4231A codec the synth
