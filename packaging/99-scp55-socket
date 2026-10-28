@@ -1,29 +1,42 @@
 #!/bin/sh
-# Reload the PCMCIA bridge after resume on machines whose socket controller
-# times out and loses the card (seen on a Panasonic CF-30). Right after resume
-# the bridge is not ready yet, so this waits and retries; the driver re-probes
-# by itself once the socket sees the card again.
+# The PCMCIA bridge on this machine (Panasonic CF-30) sometimes times out
+# across a suspend: the socket stops answering and the card disappears from
+# the bus. Reloading the bridge always costs the card its state, so first give
+# the driver's own resume a chance to bring the card back; reload only when the
+# card is really gone.
 LOG=/tmp/scp55-resume.log
+
+card_up() { [ -e /sys/bus/pcmcia/devices/0.0 ] && [ -d /sys/bus/pcmcia/devices/0.0/driver ]; }
 
 case "$1" in
   resume|thaw)
     (
       : > "$LOG"
       echo "$(date '+%H:%M:%S') resume: attendo che il bridge si assesti" >> "$LOG"
-      sleep 8
+      sleep 6
+      i=0
+      while [ $i -lt 10 ]; do
+        if card_up; then
+          echo "$(date '+%H:%M:%S') scheda tornata da sola dopo $i x2s: nessun reload" >> "$LOG"
+          exit 0
+        fi
+        i=$((i+1))
+        sleep 2
+      done
+      echo "$(date '+%H:%M:%S') scheda assente dopo 26s: ricarico il bridge" >> "$LOG"
       for attempt in 1 2 3 4 5; do
         modprobe -r scp55 2>/dev/null
         modprobe -r yenta_socket 2>/dev/null
         sleep 2
         modprobe yenta_socket 2>/dev/null
         sleep 4
-        if [ -e /sys/bus/pcmcia/devices/0.0 ]; then
+        if card_up; then
           modprobe scp55 2>/dev/null
-          echo "$(date '+%H:%M:%S') tentativo $attempt: scheda rilevata, driver caricato" >> "$LOG"
+          echo "$(date '+%H:%M:%S') tentativo $attempt: scheda recuperata" >> "$LOG"
           exit 0
         fi
-        echo "$(date '+%H:%M:%S') tentativo $attempt: scheda non rilevata, riprovo" >> "$LOG"
-        sleep 8
+        echo "$(date '+%H:%M:%S') tentativo $attempt: scheda non rilevata" >> "$LOG"
+        sleep 4
       done
       echo "$(date '+%H:%M:%S') arreso dopo 5 tentativi" >> "$LOG"
     ) >/dev/null 2>&1 &

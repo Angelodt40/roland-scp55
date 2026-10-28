@@ -2,6 +2,26 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.2.4 — non ancora pubblicata
+
+Verificata sulla CF-30 solo in parte: il resume è stato letto nel log del kernel,
+non ancora riascoltato dopo il risveglio. Non va taggata prima di quella prova.
+
+- **il driver prova a ricostruirsi la configurazione da solo dopo S3**: il core
+  pcmcia rifiuta `pcmcia_enable_device` al resume con `-EACCES`, anche se la
+  scheda è ancora sul bus con il driver legato. Se l'enable del core fallisce,
+  `.resume` ora fa quello che fa il probe: `pcmcia_disable_device`,
+  `pcmcia_loop_config`, `pcmcia_enable_device`, e solo dopo ripristina il modo
+  della scheda e il codec
+- **il resume ripristina il modo della scheda**: una sospensione è un ciclo di
+  alimentazione per la scheda, che perde sia lo stato del codec sia il modo di
+  routing (`0x334 <- 3`, `0x335 <- 1`). La firma va riletta *prima* di
+  riscrivere il modo, perché il modo la cancella
+- nota d'uso documentata nel README: con `reset_on_close=1` (default) chiudere
+  la porta rawmidi manda all-notes-off e all-sound-off, quindi un client che
+  apre, scrive una nota e chiude subito (come `amidi -S`) fa sentire solo
+  l'attacco
+
 ## 0.2.2 — 2026-10-28
 
 - **packaging fix only**: 0.2.1 shipped a `.deb` named `scp55-dkms_0.2.0-1_all.deb`

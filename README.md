@@ -167,6 +167,7 @@ your card does send data, that is worth reporting.
 | No port in `aplaymidi -l` | module not loaded — check `lsmod \| grep scp55` and `dmesg` |
 | Port present, silence | codec muted — `echo i > /proc/scp55mix` |
 | Notes hang after Ctrl+C | send All Sound Off — `echo 1 > /proc/scp55`, or replay the file |
+| Only the attack is heard, then silence | the client closed the port immediately: with `reset_on_close=1` (the default) closing the rawmidi output sends all-notes-off and all-sound-off. Use a player that keeps the port open (`aplaymidi`), or `echo 0 > /sys/module/scp55/parameters/reset_on_close` |
 | Card not detected | slot is CardBus-only, or the PCMCIA bridge needs `yenta_socket` |
 
 ## Using it with DOSBox
@@ -196,15 +197,24 @@ The driver implements suspend and resume: on suspend it stops the work queues an
 sends all-notes-off, and on resume it re-programmes the codec and puts the
 MPU-401 back into UART mode. Both log one line in `dmesg`.
 
-On the tested Panasonic CF-30 that is not enough, because the PCMCIA bridge
-itself fails after resume:
+A suspend is a power cycle for the card: it loses the codec state *and* the
+routing mode (`0x334 <- 3`, `0x335 <- 1`), so resume reads the signature first
+— writing the mode destroys it — then selects the mode again before re-running
+the codec bring-up. On the tested Panasonic CF-30 the pcmcia core also refuses
+its own re-enable:
 
-    pcmcia_socket0: time out after reset
+    scp55: resume: pcmcia_enable_device failed: -13
+    PM: failed to resume: error -13
 
-When that happens the card disappears from the bus and no driver can find it —
-the socket has lost it. Reloading the bridge brings it back. The repository
-ships `packaging/99-scp55-socket`, a pm-utils hook that waits for the bridge to
-settle, reloads `yenta_socket` and the driver, and retries up to five times:
+and the card stays bound to the socket in a half-configured state. From 0.2.4
+the driver does not give up: it drops the stale configuration and rebuilds it
+the way probe does (`pcmcia_disable_device`, `pcmcia_loop_config`,
+`pcmcia_enable_device`), and only then restores the card mode and the codec.
+Whether that is enough on this machine is still being measured.
+
+The repository ships `packaging/99-scp55-socket`, a pm-utils hook that first
+gives the driver's own resume a chance and reloads `yenta_socket` only when the
+card really does not come back, retrying up to five times:
 
     sudo install -m755 packaging/99-scp55-socket /etc/pm/sleep.d/99-scp55-socket
 

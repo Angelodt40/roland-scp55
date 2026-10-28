@@ -755,26 +755,51 @@ static int scp55_suspend(struct pcmcia_device *link)
 static int scp55_resume(struct pcmcia_device *link)
 {
 	int ret;
+	u8 signature;
 
 	ret = pcmcia_enable_device(link);
 	if (ret) {
-		pr_err(DRV_NAME ": resume: pcmcia_enable_device failed: %d\n", ret);
-		return ret;
+		/* S3 can leave the device in a state the core refuses to
+		 * re-enable (-13) even though the card is still bound to the
+		 * socket. Give up on the stale configuration and rebuild it
+		 * exactly as probe does, instead of returning the error with
+		 * the card unusable.
+		 */
+		pr_info(DRV_NAME ": resume: core enable failed (%d), re-configuring\n", ret);
+		pcmcia_disable_device(link);
+		link->config_flags |= CONF_AUTO_SET_IO;
+		link->io_lines = 10;
+		ret = pcmcia_loop_config(link, scp55_conf_check, NULL);
+		if (ret) {
+			pr_err(DRV_NAME ": resume: pcmcia_loop_config failed: %d\n", ret);
+			return ret;
+		}
+		ret = pcmcia_enable_device(link);
+		if (ret) {
+			pr_err(DRV_NAME ": resume: pcmcia_enable_device failed: %d\n", ret);
+			return ret;
+		}
 	}
 
 	mutex_lock(&io_mutex);
 	io_base = link->resource[0]->start;
 
-	/* after a power cycle the codec comes back with the loopback open
-	 * and the inputs muted: bring it up again, then put the MPU-401 back
-	 * into UART mode, exactly as probe does
+	/* A suspend is a power cycle as far as the card is concerned: it loses
+	 * the codec state *and* the routing mode. Read the signature first,
+	 * because writing the mode register destroys it, then select the mode
+	 * again before the codec bring-up. Skipping the mode write was why a
+	 * resumed machine had working MIDI and a silent synth: the codec came
+	 * up healthy, but the synth never reached the DAC.
 	 */
+	signature = card_signature();
+	if (card_mode)
+		card_mode_select();
 	codec_init();
 	mpu_init();
 	mutex_unlock(&io_mutex);
 
-	pr_info(DRV_NAME ": resumed, io 0x%03x, codec %s\n",
-		io_base, codec_ok ? "ok" : "silent");
+	pr_info(DRV_NAME ": resumed, io 0x%03x, signature 0x%02x, codec %s\n",
+		io_base, signature, codec_ok ? "ok" : "silent");
 	return 0;
 }
 
@@ -803,4 +828,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.2");
+MODULE_VERSION("0.2.4");
