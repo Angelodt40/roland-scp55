@@ -189,3 +189,99 @@ manufacturer's blessing as this card will ever get.
   mode where the synth reaches the DAC directly, or the vendor relied on a codec
   state we still have not reproduced. Testable: run the vendor sequence on the
   real card, with the loopback off, and listen.
+
+
+## SCP95.DRV — the Windows driver, and the part I got wrong
+
+`SCP95.DRV` is a 16-bit NE executable (nine segments, one code segment).
+Strings settle a question that this repository previously answered badly:
+
+- the INF installs it as `wave*=scp95.drv` with
+  `SubClasses="wave,midi,aux,mixer"` and class "Sound, video and game
+  controllers";
+- the driver contains `Single Mode DMA`, `Sound Blaster Emulation`,
+  `WaveOutVol`, `WaveOutMute`, `WaveADCSource`, `VU for Wave Input`;
+- `SCP55.DRV` (Windows 3.1) talks about `Waveform Input`/`Waveform Output`.
+
+So the SCP-55 is **not** a MIDI-only card: on Windows it plays PCM, records,
+mixes and emulates a Sound Blaster. Saying otherwise was a mistake — what this
+project implements today is the MIDI half, and the driver's own documentation
+had already said "wave/midi driver".
+
+### The register pair at base+2/base+3
+
+The wave/mixer code accesses a pair that no Linux driver touches. In the
+disassembly (function at 0x12ea in the code segment) the idiom is:
+
+```
+mov dx,[si+6] ; inc dx ; inc dx ; out dx,al   ; write to base+2
+mov dx,[si+6] ; add dx,3 ; in al,dx           ; read from base+3
+```
+
+with a shadow byte at `[si+0x17]` holding what looks like the CS4231
+interface-control register: the driver sets bit `0x40` (Mode Change Enable,
+the same bit the CS4231 keeps in register 0x09), writes it out, then clears it
+and re-writes with bits `0x09`, polling bit `0x20` of `base+3` for
+completion.
+
+A port dump of a card that had just been probed by our driver reads
+`0x332 = 0x80`, `0x333 = 0x00` — plausible for exactly this pair. This is a
+candidate, not a conclusion: it has not been written to on purpose, because the
+neighbouring pair `0x334`/`0x335` is a mode switch that silences the card when
+touched at runtime.
+
+### PCM and the DMA problem
+
+The CS4231A is the codec of the Sound Blaster Pro; its PCM path is driven by
+**ISA-style DMA**, and the "Single Mode DMA" string says the Windows driver
+relied on it. On the test machine the PCMCIA socket provides no DMA resources
+at all (`/sys/class/pcmcia_socket/pcmcia_socket0/available_resources_dma` does
+not exist), so `pcmcia_request_dma()` would have nothing to hand out.
+
+That makes PCM playback on this particular laptop unlikely, but it is not
+proven yet. The decisive test is a one-line probe in the driver: ask the socket
+for a DMA channel at probe time and log the result. If that fails, the honest
+position is "the card can do PCM, this machine's bridge cannot feed it", and
+the next thing to try is a machine whose PC Card controller still implements
+DMA.
+
+
+### The vendor driver does not use DMA
+
+Three independent sources agree:
+
+| evidence | says |
+|---|---|
+| `Scp95a.inf`: `DMAConfig=` (empty) | the card requests no DMA channel |
+| `SCP95.VXD` imports | no `VDMAD`, `VSD` or `DMA` service at all |
+| `SCP95.DRV` strings | `DMA` appears only in `Single Mode DMA`, a mixer option label |
+
+So the Windows driver played PCM **without ISA DMA**, which is the opposite of
+what a CS4231A normally needs. The plausible architecture — a hypothesis, not a
+measurement — is that the card carries its own audio controller:
+
+- the CIS asks for a **1 MB memory window** (the socket probe logs
+  `memory probe 0xe8210000-0xe82fffff` at load), which is the size one would
+  expect for an audio ring buffer;
+- the wave/mixer code addresses a register pair at `base+2`/`base+3` with a
+  shadow byte that mirrors the CS4231 interface control register, i.e. a
+  command/status interface of its own;
+- the code uses far pointers and `ES` segment loads (`les bx,[bp+4]`,
+  `mov es,dx`), consistent with streaming samples through a mapped segment
+  rather than through port I/O.
+
+If that holds, PCM playback on Linux is possible **without any DMA channel**:
+the driver would map the window, write samples into it, and kick the card
+through `base+2`/`base+3`. That would turn this from a MIDI interface into a
+real sound card.
+
+### Next concrete steps
+
+1. Decode the CIS config entries by hand (the modern `pcmciautils` no longer
+   ships `dump_cis`) to see the memory window descriptors: attribute or common
+   memory, 8- or 16-bit, size.
+2. Read the wave entry points of `SCP95.DRV` and turn them into a register map
+   for `base+2`/`base+3`: what selects format, what carries the buffer
+   pointer, what starts and stops playback.
+3. Before touching the kernel module, prove it from user space: map the window,
+   write a few frames, and see whether the card makes a noise.
