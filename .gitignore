@@ -6,3 +6,4 @@
 *.symvers
 .*.cmd
 .tmp_versions/
+dist/
