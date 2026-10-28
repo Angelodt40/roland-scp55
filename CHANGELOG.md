@@ -2,6 +2,13 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.2.2 — 2026-10-28
+
+- **packaging fix only**: 0.2.1 shipped a `.deb` named `scp55-dkms_0.2.0-1_all.deb`
+  because the packaging script takes the version from `dkms.conf`, which had not
+  been bumped with the source. The module itself was correct and verified; the
+  package label was not. No code changes in this release
+
 ## 0.2.1 — 2026-10-28
 
 - **the codec loopback was a workaround, and it is gone**: the vendor wave path
