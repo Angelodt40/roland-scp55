@@ -356,3 +356,43 @@ status byte stayed `0x02`, and the synth kept playing.
 What the three values *mean* is still unknown. They look like routing or clock
 selection rather than a mixer, and the way to find out is to read `SCP95.DRV`
 with the register file already identified — not to write guesses.
+
+
+## Reading `SCP95.DRV` properly
+
+`SCP95.DRV` is a 16-bit NE executable and it cost three wrong attempts to read
+it. The details that matter, for whoever tries next:
+
+- the segment table sits at **file offset 0xb8**, not at the offset the header
+  fields suggest;
+- segment offsets in that table are in **units of 16 bytes**, so the file range
+  of a segment is `offset * 16 .. offset * 16 + length`;
+- with that, all nine segments land inside the file, which is how the parse was
+  validated.
+
+Segment map, with the number of port accesses each one performs:
+
+| seg | file range | len | port I/O | what it holds |
+|---|---|---|---|---|
+| 1 | 0x002e0..0x00dc0 | 2784 | — | data |
+| 2 | 0x00300..0x00f34 | 3124 | — | data |
+| 3 | 0x00fc0..0x01b04 | 2884 | 6 out, 5 in | codec and mixer init |
+| 4 | 0x01bc0..0x02234 | 1652 | 1 in | strings, including `Single Mode DMA` |
+| 5 | 0x022c0..0x03112 | 3666 | 3 out, 2 in | **PIC mask helper** (ports 0x21/0xA1) |
+| 6 | 0x03200..0x038c4 | 1732 | 1 out, 6 in | MPU-401 polling helpers |
+| 7 | 0x038e0..0x07520 | 15424 | 2 out | wave path |
+| 8 | 0x075c0..0x092b0 | 7408 | 3 out, 2 in | — |
+| 9 | 0x0b0e0..0x0b133 | 83 | — | — |
+
+### A correction: interrupts *were* used
+
+The segment 5 helper enables and disables individual IRQ mask bits directly on
+the 8259 (ports `0x21` and `0xA1`, with `cli`/`sti` around the read-modify-write).
+So the Windows driver did use interrupts — the earlier conclusion "the vendor
+VxD imports no VPICD, therefore no interrupt-driven MIDI input" was too strong:
+that observation is about the VxD, and this 16-bit code path talks to the PIC
+itself.
+
+Whether anything ever reads MIDI data from an interrupt is still open, and it is
+the next thing to trace: find which vector the driver hooks and what its handler
+does with the port.
