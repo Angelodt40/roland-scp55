@@ -2,6 +2,23 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.1.7 — 2026-10-28
+
+- **the codec loopback was the missing piece**: the synth does not feed the
+  CS4231A as a digital stream, it enters the codec as an analogue input, so the
+  ADC -> DAC loopback (register `0x0E` bit 1) has to be closed or the card stays
+  silent while every status register reports a healthy codec. This is why the
+  card played when inserted into a running machine and went mute after a cold
+  power-up: 0.1.5 unmuted the input gains but never opened the loopback
+- **codec_init()**: one function now brings the whole codec up — Mode Change
+  Enable, playback format, ADC/aux/line/mic gains, DAC attenuation and the
+  loopback — and it is called from probe and from resume instead of a partial
+  unmute in two places
+- **MPU-401 acknowledgements**: the driver drains any byte the card queued before
+  it arrived and waits up to 1 s for the `0xFE` ack instead of 100 ms. The card
+  on the tested CF-30 answers late after a cold boot and the old timeout logged
+  "MPU reset not acknowledged" for a card that was in fact answering
+
 ## 0.1.6 — 2026-10-28
 
 - **suspend/resume callbacks**: suspend stops the work queues and sends

@@ -446,6 +446,43 @@ static const struct proc_ops mix_ops = {
 	.proc_write	= mix_write,
 };
 
+
+/* ---- codec bring-up ----
+ * The synth reaches the output through the CS4231A's analogue input, so the
+ * codec has to digitise it and hand it back to its own DAC: unmuting the
+ * input gains is not enough, the ADC -> DAC loopback path (LOOPBACK bit 1)
+ * has to be closed as well. Without it the card is silent while every status
+ * register still reports a healthy codec, which is exactly how 0.1.5 behaved
+ * after a cold power-up.
+ *
+ * Verified on hardware 2026-10-28: with 0x0E = 0x02 the test phrase is
+ * audible, with 0x0E = 0x00 the card is silent.
+ */
+static void codec_init(void)
+{
+	u8 aux1;
+
+	/* Mode Change Enable: the format and loopback registers only accept
+	 * writes while MCE is set.
+	 */
+	cc_put(0x09, 0x40);
+
+	cc_put(0x08, 0x00);			/* playback format: 8-bit linear */
+	cc_put(0x00, 0x08); cc_put(0x01, 0x08);	/* ADC input */
+	cc_put(0x02, 0x08); cc_put(0x03, 0x08);	/* auxiliary 1 */
+	cc_put(0x04, 0x08); cc_put(0x05, 0x08);	/* auxiliary 2 */
+	cc_put(0x06, 0x00); cc_put(0x07, 0x00);	/* DAC: no attenuation */
+	cc_put(0x13, 0x08); cc_put(0x14, 0x08);	/* line in */
+	cc_put(0x15, 0x08); cc_put(0x16, 0x08);	/* mic */
+	cc_put(0x1b, 0x08);			/* mono input */
+	cc_put(0x0e, 0x02);			/* ADC -> DAC loopback */
+
+	cc_put(0x09, 0x00);			/* leave mode change */
+
+	aux1 = cc_get(0x02);
+	codec_ok = ((aux1 & 0x1f) == 0x08);
+}
+
 /* ---- MPU-401 UART initialisation ---- */
 static int mpu_wait_read(u8 *out, int ms)
 {
@@ -465,16 +502,22 @@ static void mpu_init(void)
 {
 	u8 ack = 0;
 
+	/* Drop whatever the card queued before we got here: a stale ACK left
+	 * in the read register makes every later command look unanswered.
+	 */
+	while (inb(io_base + 1) & 0x80)
+		inb(io_base);
+
 	/* Reset, then switch to UART mode; each command is acknowledged with
 	 * 0xFE. Without this the card keeps a stale byte in its read path and
 	 * the receive side returns the same value forever.
 	 */
 	outb(0xff, io_base + 1);
-	if (!mpu_wait_read(&ack, 100) || ack != 0xfe)
+	if (!mpu_wait_read(&ack, 1000) || ack != 0xfe)
 		pr_info(DRV_NAME ": MPU reset not acknowledged (%#04x)\n", ack);
 
 	outb(0x3f, io_base + 1);
-	if (!mpu_wait_read(&ack, 100) || ack != 0xfe)
+	if (!mpu_wait_read(&ack, 1000) || ack != 0xfe)
 		pr_info(DRV_NAME ": UART mode not acknowledged (%#04x)\n", ack);
 }
 
@@ -560,11 +603,8 @@ static int scp55_probe(struct pcmcia_device *link)
 	io_base = base;
 	scp_dev = link;
 
-	cc_put(0x06, 0x00); cc_put(0x07, 0x00);
-	cc_put(0x02, 0x08); cc_put(0x03, 0x08);
-	cc_put(0x04, 0x08); cc_put(0x05, 0x08);
+	codec_init();
 	aux1 = cc_get(0x02);
-	codec_ok = ((aux1 & 0x1f) == 0x08);
 	proc_create("scp55", 0666, NULL, &status_ops);
 	proc_create("scp55mix", 0666, NULL, &mix_ops);
 
@@ -647,13 +687,11 @@ static int scp55_resume(struct pcmcia_device *link)
 	mutex_lock(&io_mutex);
 	io_base = link->resource[0]->start;
 
-	/* the codec is muted again after a power cycle: unmute it, then put
-	 * the MPU-401 back into UART mode, exactly as probe does
+	/* after a power cycle the codec comes back with the loopback open
+	 * and the inputs muted: bring it up again, then put the MPU-401 back
+	 * into UART mode, exactly as probe does
 	 */
-	cc_put(0x06, 0x00); cc_put(0x07, 0x00);
-	cc_put(0x02, 0x08); cc_put(0x03, 0x08);
-	cc_put(0x04, 0x08); cc_put(0x05, 0x08);
-	codec_ok = ((cc_get(0x02) & 0x1f) == 0x08);
+	codec_init();
 	mpu_init();
 	mutex_unlock(&io_mutex);
 
@@ -687,4 +725,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.1.6");
+MODULE_VERSION("0.1.7");
