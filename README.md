@@ -199,24 +199,40 @@ MPU-401 back into UART mode. Both log one line in `dmesg`.
 
 A suspend is a power cycle for the card: it loses the codec state *and* the
 routing mode (`0x334 <- 3`, `0x335 <- 1`), so resume reads the signature first
-— writing the mode destroys it — then selects the mode again before re-running
-the codec bring-up. On the tested Panasonic CF-30 the pcmcia core also refuses
-its own re-enable:
+— writing the mode destroys it — then selects the mode again and re-runs the
+codec bring-up, and finally puts the MPU-401 back into UART mode.
 
-    scp55: resume: pcmcia_enable_device failed: -13
-    PM: failed to resume: error -13
+**What the driver recovers, measured on the CF-30 (2026-10-29):**
 
-and the card stays bound to the socket in a half-configured state. From 0.2.4
-the driver does not give up: it drops the stale configuration and rebuilds it
-the way probe does (`pcmcia_disable_device`, `pcmcia_loop_config`,
-`pcmcia_enable_device`), and only then restores the card mode and the codec.
-Whether that is enough on this machine is still being measured.
+    scp55: resume: core enable failed (-13), re-configuring
+    scp55: resumed, io 0x330, signature 0xaa, codec ok
 
-The repository ships `packaging/99-scp55-socket`, a pm-utils hook that first
-gives the driver's own resume a chance and reloads `yenta_socket` only when the
-card really does not come back, retrying up to five times:
+The pcmcia part now works: when the core refuses to re-enable the window with
+`-EACCES`, the driver drops the stale configuration and rebuilds it as probe
+does (`pcmcia_disable_device`, `pcmcia_loop_config`, `pcmcia_enable_device`),
+and the socket does not have to be reloaded any more — the hook logs "scheda
+tornata da sola" and leaves `yenta_socket` alone.
 
-    sudo install -m755 packaging/99-scp55-socket /etc/pm/sleep.d/99-scp55-socket
+**What it does not recover:** the MPU, and with it the synth.
+
+    scp55: UART mode not acknowledged, resetting the MPU
+    scp55: MPU-401 still silent
+
+The card comes back with its I/O window and its codec alive — registers read and
+write correctly — but the MPU answers neither `0x3F` nor `0xFF` until the
+machine is really powered down. Programming the control interface first (the
+vendor sequence, see `docs/vendor-init-sequence.md`) makes it answer
+*sometimes*: it worked twice on a card that had been running, and never on a
+freshly resumed one. So on this machine, after S3: the driver puts the socket
+back and the codec back, and the card stays mute until a power cycle.
+
+Two operational notes, both learned the hard way: writing `base+4`/`base+5`
+on a card that is already running can make it emit broadband noise between
+60 and 600 Hz — not notes, noise — and that noise passes through the codec's
+DAC, so it can be stopped from software with `echo 'w 6 0x3f' > /proc/scp55mix`
+and the same for `0x07`, without touching the power. And `scripts/scp55-vendor-probe.sh`
+is the instrument for all of this: it walks the sequence one step at a time and
+prints what the card answers, so a failure can be attributed instead of guessed.
 
 It writes what happened to `/tmp/scp55-resume.log`. Without the hook the card is
 unavailable until the next reboot; results on other machines may differ, and

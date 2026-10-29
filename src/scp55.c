@@ -713,14 +713,14 @@ static int scp55_probe(struct pcmcia_device *link)
 	 * overwrite the signature. The codec has to be initialised last,
 	 * because those writes reset it.
 	 */
-	signature = card_signature();
-	card_control_init();
-	/* The handshake leaves the MPU out of UART mode, so put it back
-	 * before anything is played. mpu_init() no longer touches the
-	 * control pair itself, which is what keeps the codec state below
-	 * valid.
+	/* Leave the control pair alone at probe. Measured on hardware: a
+	 * fresh card plays as it is, and writing base+4/base+5 here leaves
+	 * the MPU unacknowledged and the synth mute. The handshake is only
+	 * for recovering a card that has already lost its state - see
+	 * scripts/scp55-vendor-probe.sh - and even then it does not always
+	 * work.
 	 */
-	mpu_init();
+	signature = card_signature();
 	if (card_mode)
 		card_mode_select();
 	codec_init();
@@ -752,7 +752,7 @@ static int scp55_probe(struct pcmcia_device *link)
 	/* Never initialise the MPU here. The card is already in UART mode
 	 * after power-on and does not acknowledge 0x3F, so mpu_init() would
 	 * fall through to a 0xFF reset and leave the synth deaf. That is what
-	 * broke 0.2.5/0.2.10 at boot: the test phrase is discarded either way,
+	 * broke 0.2.5/0.2.11 at boot: the test phrase is discarded either way,
 	 * because the probe does not need the MPU to be touched at all.
 	 */
 	if (beep_on_probe)
@@ -883,4 +883,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.10");
+MODULE_VERSION("0.2.11");
