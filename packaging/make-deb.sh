@@ -57,6 +57,9 @@ if ! command -v dkms >/dev/null 2>&1; then
 fi
 dkms add -m scp55 -v $VER 2>/dev/null || true
 dkms build -m scp55 -v $VER
+# If the module is loaded, dkms refuses to swap it and the postinst
+# aborts half-configured - which is exactly what happens on an upgrade.
+modprobe -r scp55 2>/dev/null || true
 dkms install -m scp55 -v $VER --force
 depmod -a
 modprobe scp55 2>/dev/null || true
