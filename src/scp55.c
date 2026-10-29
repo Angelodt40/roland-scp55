@@ -818,12 +818,17 @@ static void scp55_dump_attr_long(struct resource *res)
 	for (off = 0; off < 0x400; off += 32) {
 		char buf[3 * 32 + 1];
 		int n = 0;
+		int page = off / WIN_SIZE;
 
-		if (pcmcia_map_mem_page(scp55_dev, res, off))
+		/* The card pages are 64 KB, so the offset inside the page is
+		 * what actually moves the read - the earlier dump mapped the
+		 * window again but always read from its start.
+		 */
+		if (pcmcia_map_mem_page(scp55_dev, res, page * WIN_SIZE))
 			continue;
 		for (i = 0; i < 32; i++)
 			n += scnprintf(buf + n, sizeof(buf) - n, "%02x ",
-				       readb(attr_map + i));
+				       readb(attr_map + (off % WIN_SIZE) + i));
 		pr_info(DRV_NAME ": attr %03x: %s\n", off, buf);
 	}
 }
@@ -1107,4 +1112,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.20");
+MODULE_VERSION("0.2.21");
