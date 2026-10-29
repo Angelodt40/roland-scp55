@@ -2,6 +2,19 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.4.3 - 29 ottobre 2026
+
+Correzione del pacchetto, trovata installando la 0.4.2 come farebbe un utente.
+
+- Il postinst ora scarica il modulo prima di dkms install: se il modulo era
+  caricato, dkms si rifiutava di sostituirlo e il postinst, che gira con
+  set -e, lasciava il pacchetto in stato half-configured (iF). E il caso
+  normale di un aggiornamento, non un caso limite.
+- Verificato sul CF-30 installando la 0.4.3 con il modulo caricato:
+  Status: install ok installed, Version: 0.4.3-1, modulo attivo 0.4.3 preso da
+  /lib/modules/<kernel>/updates/dkms/scp55.ko, codec smutato e rawmidi
+  registrato.
+
 ## 0.4.2 - 29 ottobre 2026
 
 Ricerca sulla finestra di memoria e igiene dei test. Nessun cambiamento al
