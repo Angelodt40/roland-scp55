@@ -178,3 +178,26 @@ That leaves a short list, in order of likelihood:
 The next step is therefore not on the card: it is reading `SCP95.VXD` for the
 sequence that precedes the first sample, and comparing it with what the 16-bit
 driver does.
+
+## The VxD transmit loop is MIDI, not PCM (29/10)
+
+The most promising loop in `SCP95.VXD` turned out to be the MIDI transmitter.
+At `0x1D01` the code loads a byte index, a count of `0x80`, a port from a data
+word, and then:
+
+    inc dx / in al, dx / and al, 0x40 / jnz done
+    dec dx / mov al, [esi] / out dx, al / inc si / and si, 0x3ff / loop
+
+A byte at a time with the MPU-401 ready bit, a 1 KB ring, at most 128 bytes per
+call. Three things say MIDI and not audio:
+
+- a few instructions earlier the code compares `al` with `0xF7`, the end of a
+  SysEx message;
+- the queue built at `0x1ccc` holds 128 entries of `(dx, ax)` pairs - status
+  and data bytes - not samples;
+- the handshake bit is `0x40` on the status port, which is the MPU-401 DSR this
+  driver already uses for rawmidi.
+
+So the PCM path is still unfound, and the 16-bit driver has no other port
+streaming to offer. Recorded here because it is an easy thing to mistake for
+the wave engine, and it cost time once.
