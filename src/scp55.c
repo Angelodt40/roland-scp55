@@ -711,7 +711,15 @@ static int scp55_conf_check(struct pcmcia_device *link, void *priv)
  */
 #define WIN_SIZE	0x10000		/* the aperture; the card owns sixteen */
 #define WIN_PAGES	16
-#define MAP_ATTRIB	0x20		/* attribute memory instead of common */
+/* These are the bits the core copies from res->flags into the socket window
+ * (WIN_FLAGS_MAP = 0x63). Without MAP_ACTIVE the window is reserved but never
+ * enabled, and every read comes back 0xff - which is exactly what happened
+ * until this was spotted. Careful: IORESOURCE_MEM_16BIT (0x08) is NOT the
+ * same thing, it sits in WIN_FLAGS_REQ and would mean "window 1".
+ */
+#define SCP_ACTIVE	0x01		/* MAP_ACTIVE */
+#define SCP_16BIT	0x02		/* MAP_16BIT */
+#define SCP_ATTRIB	0x20		/* MAP_ATTRIB */
 
 static struct resource *win_res, *attr_res;
 static void __iomem *win_map, *attr_map;
@@ -725,9 +733,9 @@ static int scp55_window_reserve(struct pcmcia_device *link, int which)
 	if (!res)
 		return -ENODEV;
 
-	res->flags = IORESOURCE_MEM | IORESOURCE_MEM_16BIT;
+	res->flags = IORESOURCE_MEM | SCP_ACTIVE | SCP_16BIT;
 	if (which)
-		res->flags |= MAP_ATTRIB;
+		res->flags |= SCP_ATTRIB;
 	res->start = 0;
 	res->end = WIN_SIZE;
 
@@ -797,6 +805,59 @@ static void scp55_dump_cis_via_socket(struct pcmcia_device *link)
 	pr_info(DRV_NAME ": attribute via socket: %s\n", buf);
 }
 
+/* Walk the whole attribute space in 32-byte lines: the CIS and any vendor
+ * tuple live there, and the card's memory descriptor is what tells us how the
+ * 1 MB is laid out.
+ */
+static void scp55_dump_attr_long(struct resource *res)
+{
+	int off, i;
+
+	if (!res || !attr_map)
+		return;
+	for (off = 0; off < 0x400; off += 32) {
+		char buf[3 * 32 + 1];
+		int n = 0;
+
+		if (pcmcia_map_mem_page(scp55_dev, res, off))
+			continue;
+		for (i = 0; i < 32; i++)
+			n += scnprintf(buf + n, sizeof(buf) - n, "%02x ",
+				       readb(attr_map + i));
+		pr_info(DRV_NAME ": attr %03x: %s\n", off, buf);
+	}
+}
+
+/* Does any of the 1 MB common memory carry something? The wave engine is fed
+ * from the host, so empty is expected - but "empty" and "not reachable" look
+ * the same if you only sample the first bytes.
+ */
+static void scp55_scan_cmem(struct resource *res)
+{
+	int page, off, i, used;
+	u32 sum;
+
+	if (!res || !win_map)
+		return;
+	for (page = 0; page < WIN_PAGES; page++) {
+		if (pcmcia_map_mem_page(scp55_dev, res, page * WIN_SIZE))
+			continue;
+		used = 0;
+		sum = 0;
+		for (off = 0; off < WIN_SIZE; off += 512) {
+			for (i = 0; i < 512; i++) {
+				u8 v = readb(win_map + off + i);
+				if (v) {
+					used++;
+					sum += v;
+				}
+			}
+		}
+		pr_info(DRV_NAME ": cmem page %2d: %d/65536 non-zero (sum %u)\n",
+			page, used, sum);
+	}
+}
+
 static void scp55_window_map(struct pcmcia_device *link)
 {
 	/* The card is not a blank CD: 64 KB of attribute memory hold the CIS.
@@ -804,11 +865,15 @@ static void scp55_window_map(struct pcmcia_device *link)
 	 * the card and an all-0xff common memory means empty, not broken.
 	 */
 	scp55_dump_cis_via_socket(link);
-	if (attr_res)
+	if (attr_res) {
 		scp55_dump_window(attr_res, &attr_map, "attr", WIN_SIZE, 1, 64);
-	if (win_res)
+		scp55_dump_attr_long(attr_res);
+	}
+	if (win_res) {
 		scp55_dump_window(win_res, &win_map, "cmem", WIN_SIZE,
 				  WIN_PAGES, 16);
+		scp55_scan_cmem(win_res);
+	}
 
 	scp55_port_snapshot("window up");
 }
@@ -1042,4 +1107,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.18");
+MODULE_VERSION("0.2.20");
