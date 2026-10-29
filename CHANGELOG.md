@@ -2,6 +2,51 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.4.0 - 29 ottobre 2026
+
+Prima release dopo la 0.2.2: raccoglie il lavoro sul resume, la ricerca sulla
+finestra di memoria e il mixer. Verificata sulla CF-30 con la scheda in mano.
+
+**Mixer ALSA.**
+
+- `Master Volume` (0..127) e il GS master volume, inviato come SysEx
+  `F0 41 10 42 12 40 00 04 vv sum F7` sull'MPU: e il controllo che comanda
+  davvero l'uscita, verificato in `alsamixer` mentre la scheda suonava. La
+  scheda non trasmette, quindi il valore non si rilegge: il controllo riporta
+  l'ultimo scritto.
+- Controlli del codec (`DAC Attenuation`, `DAC Mute`, `Aux1`, `Aux2`, `AD
+  Input`, `Line`, `Mic` capture): scrivono registri veri e verificabili, ma il
+  synth **non** passa da li - con il DAC muto suona lo stesso, misurato. Sono
+  esposti perche sono veri, con il nome che dice cosa sono.
+- Il registro di attenuazione conserva due bit, non quattro: la scala reale e
+  0..3, e i valori sopra `0x30` si avvolgono.
+
+**Resume dalla sospensione (S3).**
+
+- Se il core rifiuta `pcmcia_enable_device`, il driver ricostruisce la
+  configurazione come al probe invece di arrendersi.
+- La firma va letta prima dell'handshake, e la sequenza del vendor
+  (`base+4 <- 2`, `base+5 <- 1`, attesa, `base+10 <- 0`) e obbligatoria prima
+  di ogni comando MPU: senza, la scheda resta sorda.
+- Resta un limite noto: dopo S3 l'MPU non torna, e l'unico recupero affidabile
+  e togliere alimentazione. Documentato in `docs/hardware.md`.
+
+**Finestra di memoria (ricerca, `mem_probe`).**
+
+- La finestra ora **viene concessa**: `res->end` in `pcmcia_request_window()` e
+  la dimensione da riservare, non l'ultimo indirizzo, e `MAP_ACTIVE` e il bit
+  che la attiva. Con quelli si leggono le due finestre e il CIS.
+- La common memory non e RAM indirizzabile: le scritture finiscono tutte nello
+  stesso posto e le letture tornano l'ultimo valore. Misure e tabella in
+  `docs/memory-window.md`.
+- Tutto dietro `mem_probe` (default 0): il caricamento normale resta I/O-only.
+
+**Altro.**
+
+- `beep_on_probe` non e piu attivo di default: un `insmod` non deve suonare, e
+  la frase di prova ha reso ambigui diversi confronti A/B.
+- README riscritto: dice cosa il modulo e, cosa non e, e cosa e in ricerca.
+
 ## 0.2.5 — non ancora pubblicata
 
 Contiene tutto quello che era nella 0.2.4 (mai rilasciata) più la correzione
