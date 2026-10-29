@@ -589,13 +589,13 @@ static void mpu_init(void)
 	u8 ack = 0;
 	int i, attempt;
 
-	/* The card only answers MPU commands after its control interface has
-	 * been programmed: selector 2, value 1, then wait for the status to
-	 * read back zero. Verified on hardware: without this, 0x3F is never
-	 * acknowledged, the fallback 0xFF leaves the synth deaf, and the card
-	 * looks dead until the next power cycle.
+	/* The caller must have run card_control_init() before this: the card
+	 * only answers MPU commands once its control interface is programmed.
+	 * It must also have run codec_init() *after* that handshake, because
+	 * writing base+4/base+5 resets the codec state and silences the card.
+	 * Order, measured on hardware: card_control_init, mode select,
+	 * codec_init, mpu_init.
 	 */
-	card_control_init();
 
 	/* Drop whatever the card queued, but never loop forever: DRR can stay
 	 * high with a byte that never pops.
@@ -708,8 +708,19 @@ static int scp55_probe(struct pcmcia_device *link)
 	io_base = base;
 	scp_dev = link;
 
-	/* Identify first: selecting the card mode overwrites the signature. */
+	/* Identify first, then program the control interface: both the
+	 * handshake and the mode selection write base+4/base+5, and both
+	 * overwrite the signature. The codec has to be initialised last,
+	 * because those writes reset it.
+	 */
 	signature = card_signature();
+	card_control_init();
+	/* The handshake leaves the MPU out of UART mode, so put it back
+	 * before anything is played. mpu_init() no longer touches the
+	 * control pair itself, which is what keeps the codec state below
+	 * valid.
+	 */
+	mpu_init();
 	if (card_mode)
 		card_mode_select();
 	codec_init();
@@ -741,7 +752,7 @@ static int scp55_probe(struct pcmcia_device *link)
 	/* Never initialise the MPU here. The card is already in UART mode
 	 * after power-on and does not acknowledge 0x3F, so mpu_init() would
 	 * fall through to a 0xFF reset and leave the synth deaf. That is what
-	 * broke 0.2.5/0.2.8 at boot: the test phrase is discarded either way,
+	 * broke 0.2.5/0.2.10 at boot: the test phrase is discarded either way,
 	 * because the probe does not need the MPU to be touched at all.
 	 */
 	if (beep_on_probe)
@@ -872,4 +883,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.8");
+MODULE_VERSION("0.2.10");
