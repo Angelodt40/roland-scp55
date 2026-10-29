@@ -13,9 +13,31 @@ Qtractor, vmpk, a tracker, a script.
 
 No firmware, no proprietary blobs, no vendor daemon. One small kernel module.
 
-**Status:** working. Tested on a Panasonic CF-30 (Toughbook) running MX-23.6
-Fluxbox i386, kernel `6.1.0-54-686-pae`. This is a single-hardware report —
-see [docs/hardware.md](docs/hardware.md) for what is known and what is not.
+**Status:** working as a MIDI synth interface. Tested on a Panasonic CF-30
+(Toughbook) running MX-23.6 Fluxbox i386, kernel `6.1.0-54-686-pae`. This is a
+single-hardware report — see [docs/hardware.md](docs/hardware.md) for what is
+known and what is not.
+
+## Scope, stated plainly
+
+**What this is.** A kernel module that brings the card up as an external MIDI
+synth: it programs the socket, un-mutes the codec, selects the routing mode the
+vendor driver uses, and exposes the MPU-401 UART as an ALSA **rawmidi** device.
+That is all it does, and it is what the releases were tested on.
+
+**What this is not.** The card is a full sound card under Windows: it also plays
+PCM, records, mixes and emulates a Sound Blaster. **None of that is implemented
+here**, and the project does not claim it: there is no ALSA PCM device, no mixer
+and no recording.
+
+**What is being researched.** The card asks for a 1 MB memory window. It is now
+reserved and readable ([docs/memory-window.md](docs/memory-window.md)) and it
+does not behave like addressed RAM, while the wave code of the vendor driver is
+partly mapped ([docs/wave-engine.md](docs/wave-engine.md)). Those documents
+record measurements and negative results alike; none of it is a supported
+feature, and none of it is on the path the synth uses today. This machine’s
+PCMCIA socket exposes no DMA resources at all, which is worth knowing before
+anyone expects PCM on it.
 
 Questions, bug reports and results from other machines: please open an
 [issue](https://github.com/Angelodt40/roland-scp55/issues). That is the
@@ -47,7 +69,10 @@ that "does nothing" is usually not broken, just silent.
    and the driver checks that signature before trusting anything else. This is
    the same test the original Roland enabler performs.
 3. It brings up the CS4231A codec the synth's audio runs through: input gains,
-   DAC attenuation, and the **ADC to DAC loopback** without which the card is
+   DAC attenuation, and the routing **mode the vendor driver itself selects**
+   (control registers `base+4` / `base+5` set to 3 / 1). Releases up to 0.2.1
+   used an ADC-to-DAC loopback instead: that was a workaround for this routing,
+   not the real path.
    silent even when every status register says it is healthy.
 4. It registers an ALSA rawmidi device; the sequencer port appears as
    `Roland SCP-55` in `aplaymidi -l`.
