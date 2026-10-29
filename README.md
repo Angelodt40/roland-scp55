@@ -54,10 +54,11 @@ attenuation and mute, Aux1/Aux2, AD input, line and mic capture): those are
 writable and verifiable, but measured not to be on the path the synth takes to
 the output, so they do not change what you hear.
 
-Not working, with reasons in [docs/hardware.md](docs/hardware.md): MIDI **input**
-(the card never transmits, and the vendor VxD imports no VPICD service either),
-PCM playback, and reliable resume from suspend on the test machine. The mixer
-map and what the codec controls really do is in [docs/mixer.md](docs/mixer.md).
+Not working, with reasons in [docs/hardware.md](docs/hardware.md): PCM playback,
+and reliable resume from suspend on the test machine. **MIDI input is untested,
+not disproven**: in our tests the card never sent a byte back, but its MIDI IN
+side was never exercised because the breakout cable was missing. The mixer map
+and what the codec controls really do is in [docs/mixer.md](docs/mixer.md).
 
 ## What the card is
 
@@ -179,13 +180,18 @@ device; the connection is made by ALSA, nothing to configure.
 The device is duplex: a rawmidi input stream is registered next to the output
 one, and a polling workqueue drains whatever the card has to send.
 
-**On the tested hardware it never sends anything.** Tested with the driver and
-directly against the ports, bypassing the driver entirely: a GM identity
-request, a GS RQ1 dump request, a GS reset and ordinary notes all produced zero
-bytes back, with the MPU status register staying at `0x00` — no data-ready flag,
-ever. The card answers MPU-401 commands (`0xFF` and `0x3F` are acknowledged with
-`0xFE`), so the receive path itself is alive; the card simply does not transmit
-on this PCMCIA interface.
+**What we measured:** with the driver, and directly against the ports bypassing
+it entirely, a GM identity request, a GS RQ1 dump request, a GS reset and
+ordinary notes all produced zero bytes back, with the MPU status register
+staying at `0x00`. The card does acknowledge MPU-401 commands (`0xFF` and `0x3F`
+answer `0xFE`), so the host-to-card direction is alive.
+
+**What we did not measure:** the card's MIDI **IN**. That needs the breakout
+cable with the DIN connectors, which we do not have, so whether the card
+forwards incoming MIDI to the host is **untested**. Two possibilities remain:
+the card may only transmit on its MIDI OUT socket, or it may forward input once
+something is connected. A loopback (MIDI OUT into MIDI IN) settles it in a
+minute, and so does any keyboard on the input.
 
 The input support is kept because it costs little and should work on any other
 MPU-401-compatible device behind the same driver. Treat it as unverified, and if

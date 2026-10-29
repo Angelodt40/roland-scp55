@@ -81,9 +81,15 @@ Documented as unavailable, and the reasoning is worth recording:
   and note traffic all produce zero bytes;
 - it does acknowledge MPU *commands*, so the card→host path exists but carries
   no MIDI;
-- the Windows 95 VxD imports **no VPICD service**, i.e. it virtualises no
-  interrupt at all, so even the vendor did not implement interrupt-driven MIDI
-  input for this card.
+- **the MIDI IN side was never exercised.** It needs the breakout cable with the
+  DIN connectors, which we do not have. So "the card does not send" is measured;
+  "the card does not forward incoming MIDI" is **not** measured, and until the
+  cable is here this stays untested;
+- an earlier revision of this file argued that the Windows 95 VxD imports no
+  VPICD service, therefore the vendor had no interrupt-driven input either. That
+  argument does not hold: the 16-bit driver enables and masks IRQ lines directly
+  on the 8259 (segment 5, ports `0x21` and `0xA1`), so the vendor *did* use
+  interrupts. What was never traced is whether a handler ever read MIDI data.
 
 The 13-byte RQ1 both vendor programs send (`F0 41 10 42 11 4F 40 00 00 00 01 70
 F7`) is a request that this card, as far as we can tell, never answers.
