@@ -201,3 +201,27 @@ call. Three things say MIDI and not audio:
 So the PCM path is still unfound, and the 16-bit driver has no other port
 streaming to offer. Recorded here because it is an easy thing to mistake for
 the wave engine, and it cost time once.
+
+## The VxD has no named exports (29/10)
+
+SCP95.VXD is an LE image whose strings are imports and object names, not
+services:
+
+    _ICODE__RegOpenKey, _ICODE__RegQueryValue, _ICODE__PageAllocate,
+    _ICODE__MapPhysToLinear, _ICODE__SHELL_CallDll, _ICODE__SHELL_GetProcAddress
+    objects: ICOD, PDAT, LCOD, and the module name SCP95
+
+There is no WriteWave, no SetFormat, no name of any kind to attach to: the
+exports are ordinal-only. So the route of finding the entry point by name ends
+here.
+
+What remains is real work, not a probe: extract the LE objects, apply the fixup
+records, and follow the device I/O control handler from its dispatch message
+code. That is a project of its own, and it should be started knowing that the
+answer may be that PCM needs either DMA or an internal buffer the host never
+touches - in which case this laptop cannot play PCM through this card whatever
+the driver does.
+
+The honest position for the project today: the card is a working MIDI synth
+interface with a working volume control, the memory window is mapped and
+measured, and PCM is an open research question with no promise attached.
