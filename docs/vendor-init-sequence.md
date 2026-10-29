@@ -445,3 +445,36 @@ socket leaves the card in after a power-on decides the outcome. That is what
 `scripts/scp55-vendor-probe.sh` is for: it prints what the card answers after
 each step, so the next session can find which step is the one that matters
 rather than guessing.
+
+## The codec access pair in the wave code: base+2/base+3 (2026-10-29)
+
+Disassembling the wave half of `SCP95.DRV` (NE, four segments, segment 2 is the
+30 KB code segment) shows two small routines that every mixer and wave call
+goes through:
+
+```
+read(si, reg):   wait(si) ; out base+2, reg|shadow ; in  base+3 -> al
+write(si, reg,v): wait(si) ; out base+2, reg|shadow ; out base+3, v
+```
+
+where `shadow` is a byte at `[si+0x17]` that mirrors the CS4231 interface
+control register: the code sets it to `0x40` (Mode Change Enable), writes, then
+clears it. In the CS4231 the MCE bit lives in the *index* byte, which is why it
+is OR'd into what goes to `base+2`.
+
+So on this card the codec is addressed at **`base+2` = index, `base+3` =
+data** - a pair the Linux driver never touches, because it uses `base+8`/
+`base+9`. Which of the two is the real one is not settled: on 2026-10-29,
+writing an index to `base+2` and reading `base+3` returned `0` for registers
+`0x0c`, `0x0b` and `0x08`, while `base+9` returned `0xca` - neither looks like a
+chip id, so at least one of the two is being used without its handshake.
+
+The wave init routine is readable and tells what the vendor does before it
+streams: it reads mixer registers 2..7, sets bit `0x80` on each (mute), clamps
+the gain of registers 0 and 1 to `0x0d`, then raises MCE, writes the shadow
+back, clears MCE and finally ORs `0x09` into the index and tests bit `0x08` of
+`base+3` - the SDC bit of the CS4231 interface control register.
+
+Next step for PCM: reproduce that init through `base+2`/`base+3` with the wait
+on bit `0x20` of `base+3`, and check whether the chip id appears. Only then is
+it worth writing a PCM device into the driver.
