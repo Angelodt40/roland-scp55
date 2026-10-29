@@ -675,6 +675,69 @@ static int scp55_conf_check(struct pcmcia_device *link, void *priv)
 	return 0;
 }
 
+
+/* ---- memory window probe ---- */
+/* The CIS asks for 1 MB of common memory and the socket logs it at insertion,
+ * but this driver has always requested I/O only. The Windows wave code talks
+ * to the codec through base+2/base+3, and that pair stays silent on our
+ * machines; the suspicion is that the wave engine lives behind the memory
+ * window and is only switched on once a window is requested and mapped.
+ * Nothing here is fatal: a failure just means we keep the MIDI-only behaviour.
+ */
+static struct resource *win_res;
+static void __iomem *win_map;
+
+static void scp55_probe_memory_window(struct pcmcia_device *link)
+{
+	struct resource *res;
+	int ret, i;
+	u8 a, b;
+
+	res = kzalloc(sizeof(*res), GFP_KERNEL);
+	if (!res)
+		return;
+	res->flags = IORESOURCE_MEM;
+	res->start = 0;
+	res->end = 0x100000 - 1;
+
+	ret = pcmcia_request_window(link, res, 0);
+	if (ret) {
+		pr_info(DRV_NAME ": no memory window (%d)\n", ret);
+		kfree(res);
+		return;
+	}
+	ret = pcmcia_map_mem_page(link, res, 0);
+	if (ret) {
+		pr_info(DRV_NAME ": memory window map failed (%d)\n", ret);
+		pcmcia_release_window(link, res);
+		kfree(res);
+		return;
+	}
+
+	win_res = res;
+	win_map = ioremap(res->start, resource_size(res));
+	pr_info(DRV_NAME ": memory window %pR (mapped %s)\n",
+		res, win_map ? "yes" : "no");
+
+	/* does the wave port pair answer now? */
+	mutex_lock(&io_mutex);
+	a = inb(io_base + 2);
+	b = inb(io_base + 3);
+	outb(0x0c, io_base + 2);
+	udelay(200);
+	mutex_unlock(&io_mutex);
+	pr_info(DRV_NAME ": with the window up, base+2=%02x base+3=%02x, id after 0x0c=%02x\n",
+		a, b, inb(io_base + 3));
+
+	if (win_map) {
+		char buf[3 * 16 + 1];
+		int n = 0;
+		for (i = 0; i < 16; i++)
+			n += scnprintf(buf + n, sizeof(buf) - n, "%02x ", readb(win_map + i));
+		pr_info(DRV_NAME ": window[0..15]: %s\n", buf);
+	}
+}
+
 static int scp55_probe(struct pcmcia_device *link)
 {
 	unsigned int base;
@@ -752,11 +815,13 @@ static int scp55_probe(struct pcmcia_device *link)
 	/* Never initialise the MPU here. The card is already in UART mode
 	 * after power-on and does not acknowledge 0x3F, so mpu_init() would
 	 * fall through to a 0xFF reset and leave the synth deaf. That is what
-	 * broke 0.2.5/0.2.11 at boot: the test phrase is discarded either way,
+	 * broke 0.2.5/0.2.12 at boot: the test phrase is discarded either way,
 	 * because the probe does not need the MPU to be touched at all.
 	 */
 	if (beep_on_probe)
 		beep_locked();
+
+	scp55_probe_memory_window(link);
 	return 0;
 }
 
@@ -883,4 +948,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.11");
+MODULE_VERSION("0.2.12");
