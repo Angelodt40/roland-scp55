@@ -986,6 +986,34 @@ static void scp55_alias_test(struct resource *res, void __iomem *map)
 	writew(0, map);
 }
 
+/* The 1996 driver reaches the wave/mixer side through base+2 (index) and
+ * base+3 (data), the CS4231 idiom. Read-only on purpose: we only select a
+ * register and read it back, we never write a value. mem_probe=5 asks for it.
+ */
+static void scp55_codec_port_probe(void)
+{
+	static const u8 idx[] = { 0x00, 0x04, 0x09, 0x0a, 0x0e, 0x10 };
+	char buf[16 * 6 + 1];
+	int i, n = 0;
+
+	if (!io_base)
+		return;
+
+	mutex_lock(&io_mutex);
+	for (i = 0; i < (int)ARRAY_SIZE(idx); i++) {
+		u8 data, status;
+
+		outb(idx[i], io_base + 2);
+		udelay(50);
+		status = inb(io_base + 3);
+		data = inb(io_base + 3);
+		n += scnprintf(buf + n, sizeof(buf) - n, "%02x:%02x/%02x ",
+			       idx[i], status, data);
+	}
+	mutex_unlock(&io_mutex);
+	pr_info(DRV_NAME ": codec port base+2/base+3: %s\n", buf);
+}
+
 static void scp55_window_map(struct pcmcia_device *link)
 {
 	/* The card is not a blank CD: 64 KB of attribute memory hold the CIS.
@@ -1114,6 +1142,8 @@ static int scp55_probe(struct pcmcia_device *link)
 		scp55_port_snapshot("before window");
 		scp55_window_map(link);
 	}
+	if (mem_probe >= 5)
+		scp55_codec_port_probe();
 	return 0;
 }
 
@@ -1245,4 +1275,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.25");
+MODULE_VERSION("0.2.26");
