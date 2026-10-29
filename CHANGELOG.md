@@ -2,6 +2,22 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.4.2 - 29 ottobre 2026
+
+Ricerca sulla finestra di memoria e igiene dei test. Nessun cambiamento al
+percorso che suona: MIDI e volume restano quelli della 0.4.0.
+
+- **/proc/scp55probe**: lancia le prove su una scheda gia avviata, perche ogni
+  insmod rifa il probe e cambia lo stato che si vuole osservare. Comandi:
+  read, alias, w8, w16, zeros, tone.
+- **beep_on_probe e opt-in** (default 0) e scrivibile a runtime: un insmod non
+  deve suonare, e la frase di prova ha reso ambigui diversi confronti A/B.
+- Misurato e documentato in docs/wave-engine.md: il file di registri 0x33A e
+  scrivibile e non leggibile (tutti e 64 gli indici si latchano, 0x33B risponde
+  sempre 02); registro 3 non abilita la finestra; scrivere nella finestra non
+  produce suono; il ciclo di trasmissione del VxD e MIDI, non PCM; il VxD
+  esporta solo per ordinale, quindi non esiste un punto di ingresso col nome.
+
 ## 0.4.0 - 29 ottobre 2026
 
 Prima release dopo la 0.2.2: raccoglie il lavoro sul resume, la ricerca sulla
