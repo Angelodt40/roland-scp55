@@ -666,76 +666,151 @@ static int card_setup(struct pcmcia_device *link)
 	return 0;
 }
 
+static struct resource *win_res, *attr_res;
+static void __iomem *win_map, *attr_map;
+static int win_tried, win_ret, attr_ret;
+static struct pcmcia_device *scp55_dev;
+
+static int scp55_window_reserve(struct pcmcia_device *link, int which);
+
 static int scp55_conf_check(struct pcmcia_device *link, void *priv)
 {
 	int ret = pcmcia_request_io(link);
 
 	if (ret)
 		return -ENODEV;
+
+	/* The window has to be reserved while the configuration is still
+	 * open: pcmcia_enable_device() programs the socket with the windows
+	 * that were requested before it, so asking afterwards is too late.
+	 * A refusal is not fatal - the MIDI path does not need it.
+	 */
+	if (!win_tried) {
+		win_tried = 1;
+		win_ret = scp55_window_reserve(link, 0);
+		attr_ret = scp55_window_reserve(link, 1);
+	}
 	return 0;
 }
 
 
-/* ---- memory window probe ---- */
-/* The CIS asks for 1 MB of common memory and the socket logs it at insertion,
- * but this driver has always requested I/O only. The Windows wave code talks
- * to the codec through base+2/base+3, and that pair stays silent on our
- * machines; the suspicion is that the wave engine lives behind the memory
- * window and is only switched on once a window is requested and mapped.
- * Nothing here is fatal: a failure just means we keep the MIDI-only behaviour.
+/* ---- memory window ---- */
+/* The CIS asks for 1 MB of common memory and the socket has no 1 MB to give
+ * (the bridge window is exactly 1 MB and its first 64 KB is excluded), so
+ * pcmcia_loop_config with CONF_AUTO_SET_IOMEM fails with ENOSPC. A 16-bit
+ * memory card does not need the whole thing at once anyway: a window is a
+ * 64 KB aperture that slides over the card's pages, so ask for one page and
+ * walk it. Nothing here is fatal: a failure keeps the MIDI-only behaviour.
+ *
+ * Two traps cost a session each and are worth remembering:
+ *  - in pcmcia_request_window() @res->end is the size to reserve, not the
+ *    last address (the core does "res->end += res->start - 1" afterwards),
+ *    and it must be a multiple of s->map_size;
+ *  - pcmcia_map_mem_page() wants an address in the card's own memory space,
+ *    so consecutive pages are 64 KB apart, not "page" bytes apart.
  */
-static struct resource *win_res;
-static void __iomem *win_map;
+#define WIN_SIZE	0x10000		/* the aperture; the card owns sixteen */
+#define WIN_PAGES	16
+#define MAP_ATTRIB	0x20		/* attribute memory instead of common */
 
-static void scp55_probe_memory_window(struct pcmcia_device *link)
+static struct resource *win_res, *attr_res;
+static void __iomem *win_map, *attr_map;
+static int win_tried, win_ret, attr_ret;
+
+static int scp55_window_reserve(struct pcmcia_device *link, int which)
 {
-	struct resource *res;
-	int ret, i;
-	u8 a, b;
+	struct resource *res = link->resource[which ? 3 : 2];
+	int ret;
 
-	res = kzalloc(sizeof(*res), GFP_KERNEL);
 	if (!res)
-		return;
-	res->flags = IORESOURCE_MEM;
+		return -ENODEV;
+
+	res->flags = IORESOURCE_MEM | IORESOURCE_MEM_16BIT;
+	if (which)
+		res->flags |= MAP_ATTRIB;
 	res->start = 0;
-	res->end = 0x100000 - 1;
+	res->end = WIN_SIZE;
 
 	ret = pcmcia_request_window(link, res, 0);
 	if (ret) {
-		pr_info(DRV_NAME ": no memory window (%d)\n", ret);
-		kfree(res);
-		return;
+		pr_info(DRV_NAME ": %s window refused (%d)\n",
+			which ? "attribute" : "common", ret);
+		return ret;
 	}
-	ret = pcmcia_map_mem_page(link, res, 0);
-	if (ret) {
-		pr_info(DRV_NAME ": memory window map failed (%d)\n", ret);
-		pcmcia_release_window(link, res);
-		kfree(res);
-		return;
-	}
+	if (which)
+		attr_res = res;
+	else
+		win_res = res;
+	pr_info(DRV_NAME ": %s window %pR reserved\n",
+		which ? "attribute" : "common", res);
+	return 0;
+}
 
-	win_res = res;
-	win_map = ioremap(res->start, resource_size(res));
-	pr_info(DRV_NAME ": memory window %pR (mapped %s)\n",
-		res, win_map ? "yes" : "no");
-
-	/* does the wave port pair answer now? */
+static void scp55_port_snapshot(const char *when)
+{
 	mutex_lock(&io_mutex);
-	a = inb(io_base + 2);
-	b = inb(io_base + 3);
-	outb(0x0c, io_base + 2);
-	udelay(200);
+	pr_info(DRV_NAME ": %s: base+2=%02x base+3=%02x base+8=%02x base+9=%02x\n",
+		when, inb(io_base + 2), inb(io_base + 3),
+		inb(io_base + 8), inb(io_base + 9));
 	mutex_unlock(&io_mutex);
-	pr_info(DRV_NAME ": with the window up, base+2=%02x base+3=%02x, id after 0x0c=%02x\n",
-		a, b, inb(io_base + 3));
+}
 
-	if (win_map) {
-		char buf[3 * 16 + 1];
+static void scp55_dump_window(struct resource *res, void __iomem **map,
+			      const char *what, int step, int count, int bytes)
+{
+	int page, i;
+
+	*map = ioremap(res->start, WIN_SIZE);
+	pr_info(DRV_NAME ": %s %pR mapped %s\n", what, res, *map ? "yes" : "no");
+	if (!*map)
+		return;
+
+	for (page = 0; page < count; page++) {
+		char buf[3 * 32 + 1];
 		int n = 0;
-		for (i = 0; i < 16; i++)
-			n += scnprintf(buf + n, sizeof(buf) - n, "%02x ", readb(win_map + i));
-		pr_info(DRV_NAME ": window[0..15]: %s\n", buf);
+
+		if (pcmcia_map_mem_page(scp55_dev, res, page * step)) {
+			pr_info(DRV_NAME ": %s offset %#x not mappable\n",
+				what, page * step);
+			continue;
+		}
+		for (i = 0; i < bytes; i++)
+			n += scnprintf(buf + n, sizeof(buf) - n, "%02x ",
+				       readb(*map + i));
+		pr_info(DRV_NAME ": %s %05x: %s\n", what, page * step, buf);
 	}
+}
+
+static void scp55_dump_cis_via_socket(struct pcmcia_device *link)
+{
+	char buf[3 * 32 + 1];
+	int n = 0, i;
+	u8 v;
+
+	for (i = 0; i < 32; i++) {
+		v = 0;
+		if (pcmcia_read_config_byte(link, i, &v))
+			n += scnprintf(buf + n, sizeof(buf) - n, "?? ");
+		else
+			n += scnprintf(buf + n, sizeof(buf) - n, "%02x ", v);
+	}
+	pr_info(DRV_NAME ": attribute via socket: %s\n", buf);
+}
+
+static void scp55_window_map(struct pcmcia_device *link)
+{
+	/* The card is not a blank CD: 64 KB of attribute memory hold the CIS.
+	 * If the CIS comes back as 0x01 0x03 ..., the window really talks to
+	 * the card and an all-0xff common memory means empty, not broken.
+	 */
+	scp55_dump_cis_via_socket(link);
+	if (attr_res)
+		scp55_dump_window(attr_res, &attr_map, "attr", WIN_SIZE, 1, 64);
+	if (win_res)
+		scp55_dump_window(win_res, &win_map, "cmem", WIN_SIZE,
+				  WIN_PAGES, 16);
+
+	scp55_port_snapshot("window up");
 }
 
 static int scp55_probe(struct pcmcia_device *link)
@@ -747,10 +822,22 @@ static int scp55_probe(struct pcmcia_device *link)
 	io_base = 0;
 	codec_ok = err_state = 0;
 
-	link->config_flags |= CONF_AUTO_SET_IO;
+	/* CONF_AUTO_SET_IOMEM makes pcmcia_loop_config parse the memory
+	 * descriptor of the CIS entry into link->resource[2]: the window has
+	 * to be negotiated, not invented (asking for 1 MB by hand failed with
+	 * -22).
+	 */
+	link->config_flags |= CONF_AUTO_SET_IO | CONF_AUTO_SET_IOMEM;
 	link->io_lines = 10;
 
 	ret = pcmcia_loop_config(link, scp55_conf_check, NULL);
+	if (ret) {
+		/* Never trade the working I/O path for the experiment. */
+		pr_info(DRV_NAME ": config with the memory window failed (%d), retrying I/O only\n",
+			ret);
+		link->config_flags &= ~CONF_AUTO_SET_IOMEM;
+		ret = pcmcia_loop_config(link, scp55_conf_check, NULL);
+	}
 	if (ret) {
 		err_state = ret;
 		snprintf(status, sizeof(status),
@@ -770,6 +857,7 @@ static int scp55_probe(struct pcmcia_device *link)
 
 	io_base = base;
 	scp_dev = link;
+	scp55_dev = link;
 
 	/* Identify first, then program the control interface: both the
 	 * handshake and the mode selection write base+4/base+5, and both
@@ -821,7 +909,8 @@ static int scp55_probe(struct pcmcia_device *link)
 	if (beep_on_probe)
 		beep_locked();
 
-	scp55_probe_memory_window(link);
+	scp55_port_snapshot("before window");
+	scp55_window_map(link);
 	return 0;
 }
 
@@ -850,6 +939,11 @@ static void scp55_remove(struct pcmcia_device *link)
 		card = NULL;
 		rmidi = NULL;
 	}
+	if (win_map) {
+		iounmap(win_map);
+		win_map = NULL;
+	}
+	win_res = NULL;
 	pcmcia_disable_device(link);
 	scp_dev = NULL;
 }
@@ -948,4 +1042,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.12");
+MODULE_VERSION("0.2.18");
