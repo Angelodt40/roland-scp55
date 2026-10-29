@@ -585,7 +585,7 @@ struct scp55_mix {
 };
 
 static const struct scp55_mix scp55_mixes[] = {
-	{ "Master Playback Volume", 0x06, 0x07 },
+	{ "DAC Attenuation",        0x06, 0x07 },
 	{ "Aux1 Playback Volume",   0x02, 0x03 },
 	{ "Aux2 Playback Volume",   0x04, 0x05 },
 	{ "AD Input Volume",        0x00, 0x01 },
@@ -683,6 +683,74 @@ out:
 	return err;
 }
 
+/* The codec mixer above is real but the synth does not pass through it: with
+ * the DAC muted the card still plays, measured. What a Sound Canvas actually
+ * uses for output level is the GS master volume, a SysEx message:
+ *
+ *     F0 41 10 42 12 40 00 04 vv sum F7
+ *
+ * The card never transmits anything, so the value cannot be read back: the
+ * control reports the last value written, which is all that is knowable.
+ */
+static u8 gs_volume = 0x7f;
+
+static void gs_send_volume(u8 v)
+{
+	u8 msg[11] = { 0xf0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x04, 0, 0, 0xf7 };
+	unsigned int sum;
+	int i;
+
+	v &= 0x7f;
+	msg[8] = v;
+	sum = 0x40 + 0x00 + 0x04 + v;
+	msg[9] = (128 - (sum & 0x7f)) & 0x7f;
+	for (i = 0; i < 11; i++)
+		mo(msg[i]);
+}
+
+static int scp55_gsvol_info(struct snd_kcontrol *kcontrol,
+			    struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 127;
+	return 0;
+}
+
+static int scp55_gsvol_get(struct snd_kcontrol *kcontrol,
+			   struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = gs_volume;
+	return 0;
+}
+
+static int scp55_gsvol_put(struct snd_kcontrol *kcontrol,
+			   struct snd_ctl_elem_value *ucontrol)
+{
+	int err = 0;
+	long v = clamp_t(long, ucontrol->value.integer.value[0], 0, 127);
+
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		err = -ENODEV;
+		goto out;
+	}
+	gs_volume = v;
+	gs_send_volume(gs_volume);
+out:
+	mutex_unlock(&io_mutex);
+	return err;
+}
+
+static const struct snd_kcontrol_new scp55_gsvol_template = {
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+	.info = scp55_gsvol_info,
+	.get = scp55_gsvol_get,
+	.put = scp55_gsvol_put,
+};
+
 static const struct snd_kcontrol_new scp55_mix_template = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
@@ -716,10 +784,18 @@ static int scp55_mixer_new(struct snd_card *card)
 			return err;
 	}
 
+	kctl = snd_ctl_new1(&scp55_gsvol_template, NULL);
+	if (!kctl)
+		return -ENOMEM;
+	strscpy(kctl->id.name, "Master Volume", sizeof(kctl->id.name));
+	err = snd_ctl_add(card, kctl);
+	if (err < 0)
+		return err;
+
 	kctl = snd_ctl_new1(&scp55_mute_template, NULL);
 	if (!kctl)
 		return -ENOMEM;
-	strscpy(kctl->id.name, "Master Playback Switch", sizeof(kctl->id.name));
+	strscpy(kctl->id.name, "DAC Mute", sizeof(kctl->id.name));
 	return snd_ctl_add(card, kctl);
 }
 
@@ -1445,4 +1521,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.3.2");
+MODULE_VERSION("0.4.0");

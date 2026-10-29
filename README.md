@@ -46,12 +46,18 @@ preferred channel — the maintainer does not publish an email address.
 ## What works, what does not
 
 Working: the synth plays anything sent to the ALSA sequencer port, including
-`aplaymidi` and Rosegarden, and the card is identified by its own signature.
+`aplaymidi` and Rosegarden, the card is identified by its own signature, and
+there is an ALSA mixer where **Master Volume** really works - it is the GS
+master volume, sent as SysEx to the synth, so `alsamixer` can be used while
+something is playing. The same mixer also exposes the codec registers (DAC
+attenuation and mute, Aux1/Aux2, AD input, line and mic capture): those are
+writable and verifiable, but measured not to be on the path the synth takes to
+the output, so they do not change what you hear.
 
 Not working, with reasons in [docs/hardware.md](docs/hardware.md): MIDI **input**
 (the card never transmits, and the vendor VxD imports no VPICD service either),
-a native ALSA mixer (the codec exposes an indirect register bank we have not
-mapped yet), and reliable resume from suspend on the test machine.
+PCM playback, and reliable resume from suspend on the test machine. The mixer
+map and what the codec controls really do is in [docs/mixer.md](docs/mixer.md).
 
 ## What the card is
 
