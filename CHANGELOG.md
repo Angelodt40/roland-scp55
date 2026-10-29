@@ -2,6 +2,25 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.4.5 - 29 ottobre 2026
+
+Il pacchetto ora regge un aggiornamento fatto a scheda in uso, e lo dice se non
+ci riesce.
+
+- La 0.4.3 e la 0.4.4 contenevano correzioni parziali: scaricare il modulo non
+  basta, perche la card ALSA tiene un riferimento e serve prima l unbind del
+  device PCMCIA; e dopo il ricaricamento il bus PCMCIA non riaggancia il device
+  da solo.
+- La logica sta in /usr/lib/scp55/unbind-loaded.sh (installato dal pacchetto):
+  down fa unbind e scarica il modulo con qualche tentativo, perche il
+  riferimento cade un attimo dopo; up riaggancia i device presenti sul bus.
+- Se alla fine il modulo in memoria non e la versione appena installata, il
+  postinst lo stampa e suggerisce di scaricarlo o riavviare, invece di lasciare
+  un driver vecchio che sembra nuovo.
+- Provato sul CF-30 con scheda in uso: dpkg -i finisce installed e configured,
+  il device torna agganciato e /proc/scp55 riappare con codec smutato e
+  rawmidi registrato.
+
 ## 0.4.4 - 29 ottobre 2026
 
 La correzione vera del pacchetto. La 0.4.3 non bastava.

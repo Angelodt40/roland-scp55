@@ -60,10 +60,16 @@ if ! command -v dkms >/dev/null 2>&1; then
 fi
 dkms add -m scp55 -v $VER 2>/dev/null || true
 dkms build -m scp55 -v $VER
-/usr/lib/scp55/unbind-loaded.sh || true
+/usr/lib/scp55/unbind-loaded.sh down || true
 dkms install -m scp55 -v $VER --force
 depmod -a
 modprobe scp55 2>/dev/null || true
+/usr/lib/scp55/unbind-loaded.sh up || true
+LOADED=\$(cat /sys/module/scp55/version 2>/dev/null || echo none)
+if [ "\$LOADED" != "$VER" ]; then
+  echo "scp55: the module in memory is \$LOADED, not $VER." >&2
+  echo "  Unload it or reboot to pick up the new one." >&2
+fi
 if [ -e /proc/scp55 ] && [ "\$1" = "configure" ]; then
   echo "scp55 loaded. Test phrase:  echo 1 > /proc/scp55"
 fi
