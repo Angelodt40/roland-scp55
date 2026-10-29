@@ -272,3 +272,76 @@ driver work.
 Until that happens, the honest statement stays: PCM is not implemented, the
 memory window is mapped and measured, and nothing we have tried makes the card
 consume a stream.
+
+## The wave path is in segment 8 of the 16-bit driver (29/10)
+
+After the LE work it is clear where the audio code lives, and where it does not:
+
+- SCP95.VXD imports only registry, paging, MapPhysToLinear and shell services.
+  There is no timer service, no VPICD (no interrupt) and no DMA anywhere in the
+  import list, so the VxD cannot be the thing that feeds samples.
+- PCOD, the 32-bit code object, is a service layer: port read/write helpers, a
+  wait on status bit 0x40, a timeout on bit 7, a getter that returns 0x400.
+- The wave code is in SCP95.DRV, segment 8 (file 0x075c0, 7392 bytes).
+
+### The tables
+
+At segment offset 0x15c7 there is a table of sample rates, one word each:
+
+    0x2b11  0x49d4  0x5622  0x8133  0x93a8  0xac44
+    11025   18900   22050   33075   37800   44100
+
+A parallel table at 0x15d7 holds the matching divisors, and byte tables at
+0x15e5 / 0x15ec hold format codes (00 0e 02 04 06 0c 08 0a). The routine at
+0x15ee walks the table and returns the highest rate not above the requested one,
+falling back to a default.
+
+### The setup function
+
+The function at 0x1636 takes the requested rate and channel count, computes the
+format byte, and writes it to the codec:
+
+- register 0x08 gets the computed format byte,
+- registers 0x14 and 0x15 get a 16-bit value taken from the divisor table,
+- register 0x1c gets another byte,
+- the chosen format is cached at [si+0x68], and the bytes-per-sample
+  (mono/stereo times width) is stored at [si+0x29].
+
+So the configuration half of PCM is now readable, and it matches the CS4231
+register set we already talk to.
+
+### The only two hardware accesses in the whole wave path
+
+    mov dx,[si+6]      ; I/O base
+    out dx,al          ; al = 0 -> 0x330
+    mov ax,6
+    add dx,0xa         ; base + 10 = 0x33A
+    out dx,al          ; 6 -> 0x33A
+
+and, in the stop path, the same write to 0x330 followed by codec registers 6
+and 7 with the DAC levels. There is no third port and no per-sample loop: the
+wave code never writes sample data to a port.
+
+### What that implies
+
+No DMA, no timer, no interrupt, no data port. What is left is the memory window:
+the 1 MB the CIS asks for is a ring buffer, and the engine plays from it. The
+protocol that starts that engine is not visible in the code we can read - the
+two writes above are all there is - so it must be indirect, carried by values
+the driver puts in the structures we have not decoded.
+
+### Measured against the card
+
+- Writing the format register does not read back: 0x08 returns 00 after writing
+  02, and 0x09 returns 08 after writing 40, while 0x06 reads back exactly what
+  was written. The codec answers honestly on the mixer registers and not on
+  these, so a written format cannot be confirmed from the host.
+- Feeding 8192 words of a quiet tone into the window, with format set and with
+  command 6 sent to 0x33A, produced no sound at all.
+- Windows 98 SE cannot be installed on the only machine with a PCMCIA slot
+  (Core Duo, ICH7, 2 GB of soldered RAM): setup hangs on Plug and Play
+  enumeration even with /p f and with devices disabled in the BIOS. So the
+  vendor driver cannot be observed running, and the sequence stays unknown.
+
+The honest state: the configuration of the wave path is understood, the feed is
+not, and no available machine can show it.
