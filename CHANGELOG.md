@@ -2,9 +2,26 @@
 
 All notable changes to this project. Versions correspond to git tags.
 
+## 0.4.4 - 29 ottobre 2026
+
+La correzione vera del pacchetto. La 0.4.3 non bastava.
+
+- La 0.4.3 aggiungeva `modprobe -r` prima di `dkms install`, ma non era
+  sufficiente: il modulo non si scarica mentre la card ALSA e registrata,
+  perche tiene un riferimento. Serve prima l unbind del device PCMCIA.
+  Verificato: `modprobe -r` da solo risponde "Module scp55 is in use".
+- La logica ora sta in `/usr/lib/scp55/unbind-loaded.sh`, installato dal
+  pacchetto e chiamato dal `postinst`: fa l unbind di ogni device del driver,
+  poi scarica il modulo, poi lascia fare a dkms.
+- Provato sul CF-30 partendo da uno stato gia half-configured (lasciato dalla
+  0.4.3) e con il modulo caricato: `dpkg -i` ha finito in
+  `Status: install ok installed`, `Version: 0.4.4-1`, e il modulo ricaricato
+  riporta `0.4.4` da `/lib/modules/<kernel>/updates/dkms/scp55.ko`, codec
+  smutato e rawmidi registrato.
+
 ## 0.4.3 - 29 ottobre 2026
 
-Correzione del pacchetto, trovata installando la 0.4.2 come farebbe un utente.
+Correzione del pacchetto, trovata installando la 0.4.2 come farebbe un utente. **Non risolutiva**: il modulo non si scarica mentre la card ALSA lo tiene, quindi il pacchetto restava half-configured. La correzione vera e nella 0.4.4.
 
 - Il postinst ora scarica il modulo prima di dkms install: se il modulo era
   caricato, dkms si rifiutava di sostituirlo e il postinst, che gira con

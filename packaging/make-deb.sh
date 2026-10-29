@@ -16,7 +16,8 @@ echo "==> $PKG $VER"
 mkdir -p "$STAGE/DEBIAN" \
          "$STAGE/usr/src/scp55-$VER" \
          "$STAGE/usr/share/doc/$PKG" \
-         "$STAGE/usr/lib/udev/rules.d"
+         "$STAGE/usr/lib/udev/rules.d" \
+         "$STAGE/usr/lib/scp55"
 
 cp -r "$ROOT/src" "$ROOT/dkms.conf" "$STAGE/usr/src/scp55-$VER/"
 rm -f "$STAGE/usr/src/scp55-$VER"/src/*.o \
@@ -28,6 +29,8 @@ rm -f "$STAGE/usr/src/scp55-$VER"/src/*.o \
       "$STAGE/usr/src/scp55-$VER"/src/modules.order 2>/dev/null || true
 cp "$ROOT/README.md" "$ROOT/LICENSE" "$STAGE/usr/share/doc/$PKG/"
 cp "$ROOT/udev/99-scp55.rules" "$STAGE/usr/lib/udev/rules.d/99-scp55.rules"
+cp "$ROOT/packaging/unbind-loaded.sh" "$STAGE/usr/lib/scp55/unbind-loaded.sh"
+chmod 0755 "$STAGE/usr/lib/scp55/unbind-loaded.sh"
 
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PKG
@@ -57,9 +60,7 @@ if ! command -v dkms >/dev/null 2>&1; then
 fi
 dkms add -m scp55 -v $VER 2>/dev/null || true
 dkms build -m scp55 -v $VER
-# If the module is loaded, dkms refuses to swap it and the postinst
-# aborts half-configured - which is exactly what happens on an upgrade.
-modprobe -r scp55 2>/dev/null || true
+/usr/lib/scp55/unbind-loaded.sh || true
 dkms install -m scp55 -v $VER --force
 depmod -a
 modprobe scp55 2>/dev/null || true
