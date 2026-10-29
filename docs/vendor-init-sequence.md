@@ -478,3 +478,29 @@ back, clears MCE and finally ORs `0x09` into the index and tests bit `0x08` of
 Next step for PCM: reproduce that init through `base+2`/`base+3` with the wait
 on bit `0x20` of `base+3`, and check whether the chip id appears. Only then is
 it worth writing a PCM device into the driver.
+
+### Measured: base+2/base+3 does not answer (2026-10-29)
+
+Tested on the live card, with the vendor's own protocol (wait for bit `0x80`
+of `base+2` to clear, write the index to `base+2`, read the data from
+`base+3`):
+
+```
+reg 0x0c -> 0      reg 0x0b -> 0      reg 0x08 -> 0      reg 0x09 -> 0
+base+8/base+9, same registers: 0x0c -> 0x70, 0x0b -> 0x70
+```
+
+Writing `0x0c <- 0xc0` through the `base+8` pair first, the way `SCP95.VXD`
+does right after the MPU reset, changes nothing: `base+2` then reads `0x80`
+(busy) and `base+3` still reads zero. Neither port returns anything that looks
+like the CS4231 ID, so the picture is: the pair the Linux driver uses answers,
+the pair the Windows wave code uses does not, and nothing tried so far makes it
+answer.
+
+The most likely reason is the missing **memory window**. The CIS asks for 1 MB
+of common memory, the socket logs it at card insertion, and the Linux driver
+requests I/O only (`CONF_AUTO_SET_IO`). If the wave engine lives behind that
+window, `base+2`/`base+3` may simply not be switched on until a window is
+requested and mapped. That is the next thing to try, and it is a small change:
+ask the socket for the memory window in `scp55_conf_check()`, map it, and read
+the first bytes to see whether it is RAM or registers.
