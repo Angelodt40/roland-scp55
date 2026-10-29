@@ -116,3 +116,34 @@ access goes through `dx` loaded from a structure field. That is why the
 disassembly shows a lot of `out dx, al` with nothing readable around them, and
 why the register map has to be recovered by following the structure, not by
 grepping for constants.
+
+## The 64-register file is write-only from the host (29/10, 0.4.1)
+
+`0x33A` latches any index from 0x00 to 0x3f - all sixty-four hold the value
+written - and `0x33B` returns `0x02` for every one of them. So it is not a
+register file we can read back: index in, data out, status when reading. The
+register map can only come from the driver, not from the card.
+
+### Register 3 does not enable the window
+
+With the window reserved (`mem_probe=1`) and register 3 set to 0 and then to 1
+from user space, the window behaves identically: the same sixteen zero bytes at
+page 0, and the same alias pattern - `1234` at offset 0, `1200` everywhere else,
+including page 1. Whatever register 3 selects, it is not the path to the window
+and it is not audible on the synth either (measured earlier).
+
+### Driving the research without reloading
+
+`/proc/scp55probe` now runs the experiments on a card that is already up, which
+matters because `insmod` re-runs the probe and changes the state we want to
+observe:
+
+    insmod scp55.ko mem_probe=1
+    echo read  > /proc/scp55probe    # first 16 bytes of page 0
+    echo alias > /proc/scp55probe    # one word, read from several offsets
+    echo w8    > /proc/scp55probe    # 8-bit write test
+    echo w16   > /proc/scp55probe    # 16-bit write test
+
+Results land in dmesg. The next experiments - feeding a stream, trying a
+register that matters - can be timed against a note that is already playing,
+which was impossible when every test needed a reload.

@@ -1260,6 +1260,58 @@ static void scp55_codec_port_probe(void)
 	pr_info(DRV_NAME ": codec port base+2/base+3: %s\n", buf);
 }
 
+/* Driving the research from /proc means the card is not re-probed for every
+ * experiment: insmod resets the mode and the codec, which is a different card
+ * state from the one we want to observe.
+ *
+ *   echo read  > /proc/scp55probe   first 16 bytes of page 0
+ *   echo alias > /proc/scp55probe   write one word, read it from several offsets
+ *   echo w8    > /proc/scp55probe   8-bit write test
+ *   echo w16   > /proc/scp55probe   16-bit write test
+ *
+ * Needs mem_probe=1, because that is what reserves the window.
+ */
+static ssize_t scp55probe_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	char buf[16];
+	char line[3 * 16 + 1];
+	int i, n = 0;
+
+	if (count >= sizeof(buf))
+		count = sizeof(buf) - 1;
+	if (copy_from_user(buf, ubuf, count))
+		return -EFAULT;
+	buf[count] = 0;
+
+	if (!win_res || !win_map) {
+		pr_info(DRV_NAME ": probe: no window, load with mem_probe=1\n");
+		return count;
+	}
+
+	if (!strncmp(buf, "read", 4)) {
+		if (pcmcia_map_mem_page(scp55_dev, win_res, 0))
+			return count;
+		for (i = 0; i < 16; i++)
+			n += scnprintf(line + n, sizeof(line) - n, "%02x ",
+				       readb(win_map + i));
+		pr_info(DRV_NAME ": probe read page 0: %s\n", line);
+	} else if (!strncmp(buf, "alias", 5)) {
+		scp55_alias_test(win_res, win_map);
+	} else if (!strncmp(buf, "w16", 3)) {
+		scp55_write_test16(win_res, win_map);
+	} else if (!strncmp(buf, "w8", 2)) {
+		scp55_write_test(win_res, win_map);
+	} else {
+		pr_info(DRV_NAME ": probe: unknown command\n");
+	}
+	return count;
+}
+
+static const struct proc_ops scp55probe_ops = {
+	.proc_write = scp55probe_write,
+};
+
 static void scp55_window_map(struct pcmcia_device *link)
 {
 	/* The card is not a blank CD: 64 KB of attribute memory hold the CIS.
@@ -1353,6 +1405,7 @@ static int scp55_probe(struct pcmcia_device *link)
 	aux1 = cc_get(0x02);
 	proc_create("scp55", 0666, NULL, &status_ops);
 	proc_create("scp55mix", 0666, NULL, &mix_ops);
+	proc_create("scp55probe", 0666, NULL, &scp55probe_ops);
 
 	ret = card_setup(link);
 	if (ret) {
@@ -1395,6 +1448,7 @@ static int scp55_probe(struct pcmcia_device *link)
 
 static void scp55_remove(struct pcmcia_device *link)
 {
+	remove_proc_entry("scp55probe", NULL);
 	remove_proc_entry("scp55mix", NULL);
 	remove_proc_entry("scp55", NULL);
 
@@ -1521,4 +1575,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.4.0");
+MODULE_VERSION("0.4.1");
