@@ -871,6 +871,121 @@ static void scp55_scan_cmem(struct resource *res)
 	}
 }
 
+/* Is the 1 MB real RAM or just an empty decode? Write a pattern into the
+ * first bytes of page 0 and read it back. mem_probe=2 asks for this.
+ */
+static void scp55_write_test(struct resource *res, void __iomem *map)
+{
+	static const u8 pattern[16] = {
+		0xa5, 0x5a, 0x0f, 0xf0, 0x33, 0xcc, 0x01, 0x80,
+		0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0
+	};
+	u8 back[16];
+	char before[3 * 16 + 1], after[3 * 16 + 1];
+	int i, n;
+	u8 zero = 0;
+
+	if (!res || !map)
+		return;
+	if (pcmcia_map_mem_page(scp55_dev, res, 0))
+		return;
+
+	n = 0;
+	for (i = 0; i < 16; i++)
+		n += scnprintf(before + n, sizeof(before) - n, "%02x ", readb(map + i));
+	for (i = 0; i < 16; i++)
+		writeb(pattern[i], map + i);
+	for (i = 0; i < 16; i++)
+		back[i] = readb(map + i);
+	n = 0;
+	for (i = 0; i < 16; i++)
+		n += scnprintf(after + n, sizeof(after) - n, "%02x ", back[i]);
+
+	pr_info(DRV_NAME ": write test before: %s\n", before);
+	pr_info(DRV_NAME ": write test after : %s\n", after);
+	pr_info(DRV_NAME ": write test result: %s\n",
+		memcmp(back, pattern, 16) ? "pattern NOT retained" : "RAM accepts writes");
+
+	/* Put the card back the way we found it. */
+	for (i = 0; i < 16; i++)
+		writeb(zero, map + i);
+}
+
+/* Same test, but with 16-bit accesses: the 8-bit write came back with 0xf0 in
+ * every second byte and shifted, which looks like a 16-bit memory behind a
+ * byte-wide read. mem_probe=3 asks for this one.
+ */
+static void scp55_write_test16(struct resource *res, void __iomem *map)
+{
+	static const u16 words[8] = {
+		0xa55a, 0x0ff0, 0x33cc, 0x0180,
+		0x1234, 0x5678, 0x9abc, 0xdef0
+	};
+	u16 back[8];
+	char before[6 * 8 + 1], after[6 * 8 + 1];
+	int i, n;
+
+	if (!res || !map)
+		return;
+	if (pcmcia_map_mem_page(scp55_dev, res, 0))
+		return;
+
+	n = 0;
+	for (i = 0; i < 8; i++)
+		n += scnprintf(before + n, sizeof(before) - n, "%04x ",
+			       readw(map + i * 2));
+	for (i = 0; i < 8; i++)
+		writew(words[i], map + i * 2);
+	for (i = 0; i < 8; i++)
+		back[i] = readw(map + i * 2);
+	n = 0;
+	for (i = 0; i < 8; i++)
+		n += scnprintf(after + n, sizeof(after) - n, "%04x ", back[i]);
+
+	pr_info(DRV_NAME ": 16-bit before: %s\n", before);
+	pr_info(DRV_NAME ": 16-bit after : %s\n", after);
+	pr_info(DRV_NAME ": 16-bit result: %s\n",
+		memcmp(back, words, sizeof(words)) ?
+		"pattern NOT retained" : "RAM accepts 16-bit writes");
+
+	for (i = 0; i < 8; i++)
+		writew(0, map + i * 2);
+}
+
+/* Every address read back the last word written, so the window may be a
+ * single latch that mirrors all addresses - or the address lines simply are
+ * not wired. Write one word and read it back from several offsets and from a
+ * different card page. mem_probe=4 asks for this.
+ */
+static void scp55_alias_test(struct resource *res, void __iomem *map)
+{
+	static const unsigned int offsets[] = { 0, 2, 4, 6, 8, 0x100, 0x1000 };
+	u16 v;
+	int i;
+
+	if (!res || !map)
+		return;
+
+	if (pcmcia_map_mem_page(scp55_dev, res, 0))
+		return;
+	writew(0x1234, map);
+	pr_info(DRV_NAME ": alias test, wrote 1234 at page 0 offset 0\n");
+
+	for (i = 0; i < (int)ARRAY_SIZE(offsets); i++) {
+		v = readw(map + offsets[i]);
+		pr_info(DRV_NAME ": alias page 0 offset %#06x -> %04x\n",
+			offsets[i], v);
+	}
+
+	if (pcmcia_map_mem_page(scp55_dev, res, 0x10000))
+		return;
+	pr_info(DRV_NAME ": alias page 1 offset 0 -> %04x\n", readw(map));
+
+	if (pcmcia_map_mem_page(scp55_dev, res, 0))
+		return;
+	writew(0, map);
+}
+
 static void scp55_window_map(struct pcmcia_device *link)
 {
 	/* The card is not a blank CD: 64 KB of attribute memory hold the CIS.
@@ -886,6 +1001,12 @@ static void scp55_window_map(struct pcmcia_device *link)
 		scp55_dump_window(win_res, &win_map, "cmem", WIN_SIZE,
 				  WIN_PAGES, 16);
 		scp55_scan_cmem(win_res);
+		if (mem_probe == 2)
+			scp55_write_test(win_res, win_map);
+		if (mem_probe == 3)
+			scp55_write_test16(win_res, win_map);
+		if (mem_probe >= 4)
+			scp55_alias_test(win_res, win_map);
 	}
 
 	scp55_port_snapshot("window up");
@@ -1124,4 +1245,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.22");
+MODULE_VERSION("0.2.25");
