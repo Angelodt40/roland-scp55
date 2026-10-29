@@ -21,6 +21,7 @@
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
 #include <sound/core.h>
+#include <sound/control.h>
 #include <sound/initval.h>
 #include <sound/rawmidi.h>
 #include <pcmcia/cistpl.h>
@@ -559,6 +560,166 @@ static void codec_init(void)
 	codec_ok = ((aux1 & 0x1f) == 0x08);
 }
 
+/* ---- ALSA mixer ---- */
+/* The vendor mixer (SCPMIXER.DLL) exposes these controls on the codec side:
+ * DAC attenuation, capture gain, line/synth/mic mix and input selector.
+ *
+ * Measured on the card: writing each attenuation value to register 0x06 and
+ * reading it back shows that only TWO bits are kept - 0x00, 0x10, 0x20, 0x30
+ * come back unchanged, while 0x40 reads 0x00 and 0x70 reads 0x30. The bit that
+ * a full CS4231 would use as the third attenuation bit is dropped, so the real
+ * scale is four steps, not eight. Bit 7 is mute and bits 3..0 are the input
+ * selector: only the attenuation field is written here, so the routing that
+ * codec_init puts in the low nibble survives.
+ */
+#define SCP_ATT_MASK	0x30
+#define SCP_ATT_MAX	3
+#define SCP_MUTE	0x80
+
+struct scp55_mix {
+	const char *name;
+	u8 left, right;
+};
+
+static const struct scp55_mix scp55_mixes[] = {
+	{ "Master Playback Volume", 0x06, 0x07 },
+	{ "Aux1 Playback Volume",   0x02, 0x03 },
+	{ "Aux2 Playback Volume",   0x04, 0x05 },
+	{ "AD Input Volume",        0x00, 0x01 },
+	{ "Line Capture Volume",    0x13, 0x14 },
+	{ "Mic Capture Volume",     0x15, 0x16 },
+};
+
+static int scp55_mix_info(struct snd_kcontrol *kcontrol,
+			  struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 2;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = SCP_ATT_MAX;
+	return 0;
+}
+
+static int scp55_mix_get(struct snd_kcontrol *kcontrol,
+			 struct snd_ctl_elem_value *ucontrol)
+{
+	const struct scp55_mix *m = &scp55_mixes[kcontrol->private_value];
+	int err = 0;
+
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		err = -ENODEV;
+		goto out;
+	}
+	ucontrol->value.integer.value[0] =
+		SCP_ATT_MAX - ((cc_get(m->left) & SCP_ATT_MASK) >> 4);
+	ucontrol->value.integer.value[1] =
+		SCP_ATT_MAX - ((cc_get(m->right) & SCP_ATT_MASK) >> 4);
+out:
+	mutex_unlock(&io_mutex);
+	return err;
+}
+
+static int scp55_mix_put(struct snd_kcontrol *kcontrol,
+			 struct snd_ctl_elem_value *ucontrol)
+{
+	const struct scp55_mix *m = &scp55_mixes[kcontrol->private_value];
+	int left, right, err = 0;
+
+	left = clamp_t(int, ucontrol->value.integer.value[0], 0, SCP_ATT_MAX);
+	right = clamp_t(int, ucontrol->value.integer.value[1], 0, SCP_ATT_MAX);
+
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		err = -ENODEV;
+		goto out;
+	}
+	cc_put(m->left, ((SCP_ATT_MAX - left) << 4) | (cc_get(m->left) & 0x0f));
+	cc_put(m->right, ((SCP_ATT_MAX - right) << 4) | (cc_get(m->right) & 0x0f));
+out:
+	mutex_unlock(&io_mutex);
+	return err;
+}
+
+static int scp55_mute_get(struct snd_kcontrol *kcontrol,
+			  struct snd_ctl_elem_value *ucontrol)
+{
+	int err = 0;
+
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		err = -ENODEV;
+		goto out;
+	}
+	ucontrol->value.integer.value[0] =
+		!((cc_get(0x06) | cc_get(0x07)) & SCP_MUTE);
+	ucontrol->value.integer.value[1] = ucontrol->value.integer.value[0];
+out:
+	mutex_unlock(&io_mutex);
+	return err;
+}
+
+static int scp55_mute_put(struct snd_kcontrol *kcontrol,
+			  struct snd_ctl_elem_value *ucontrol)
+{
+	int on = !!ucontrol->value.integer.value[0];
+	int err = 0;
+	u8 l, r;
+
+	mutex_lock(&io_mutex);
+	if (!io_base) {
+		err = -ENODEV;
+		goto out;
+	}
+	l = cc_get(0x06);
+	r = cc_get(0x07);
+	cc_put(0x06, on ? (l & ~SCP_MUTE) : (l | SCP_MUTE));
+	cc_put(0x07, on ? (r & ~SCP_MUTE) : (r | SCP_MUTE));
+out:
+	mutex_unlock(&io_mutex);
+	return err;
+}
+
+static const struct snd_kcontrol_new scp55_mix_template = {
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+	.info = scp55_mix_info,
+	.get = scp55_mix_get,
+	.put = scp55_mix_put,
+};
+
+static const struct snd_kcontrol_new scp55_mute_template = {
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+	.info = snd_ctl_boolean_stereo_info,
+	.get = scp55_mute_get,
+	.put = scp55_mute_put,
+};
+
+static int scp55_mixer_new(struct snd_card *card)
+{
+	struct snd_kcontrol *kctl;
+	unsigned int i;
+	int err;
+
+	for (i = 0; i < ARRAY_SIZE(scp55_mixes); i++) {
+		kctl = snd_ctl_new1(&scp55_mix_template, NULL);
+		if (!kctl)
+			return -ENOMEM;
+		kctl->private_value = i;
+		strscpy(kctl->id.name, scp55_mixes[i].name, sizeof(kctl->id.name));
+		err = snd_ctl_add(card, kctl);
+		if (err < 0)
+			return err;
+	}
+
+	kctl = snd_ctl_new1(&scp55_mute_template, NULL);
+	if (!kctl)
+		return -ENOMEM;
+	strscpy(kctl->id.name, "Master Playback Switch", sizeof(kctl->id.name));
+	return snd_ctl_add(card, kctl);
+}
+
 /* ---- MPU-401 UART initialisation ---- */
 static int mpu_wait_read(u8 *out, int ms)
 {
@@ -663,6 +824,12 @@ static int card_setup(struct pcmcia_device *link)
 
 	INIT_DELAYED_WORK(&tx_work, tx_work_fn);
 	INIT_DELAYED_WORK(&rx_work, rx_work_fn);
+
+	err = scp55_mixer_new(card);
+	if (err < 0) {
+		dev_warn(&scp_dev->dev, "mixer not registered: %d\n", err);
+		/* A missing mixer is not a reason to lose the MIDI port. */
+	}
 
 	err = snd_card_register(card);
 	if (err < 0) {
@@ -1275,4 +1442,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.26");
+MODULE_VERSION("0.3.1");
