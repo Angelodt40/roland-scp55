@@ -147,3 +147,34 @@ observe:
 Results land in dmesg. The next experiments - feeding a stream, trying a
 register that matters - can be timed against a note that is already playing,
 which was impossible when every test needed a reload.
+
+## Feeding the window does nothing (29/10, 0.4.2)
+
+With the window reserved and a card that was already playing, `/proc/scp55probe`
+wrote 8192 words into the aperture - zeros first, then a quiet square wave at two
+different amplitudes - once with register 3 at 1 and once at 0. The tones were
+written while the synth was idle and nothing was audible at any point: silence,
+measured by ear, both ways.
+
+So the window accepts writes and nobody consumes them. The engine is not running,
+and neither writing to the window nor selecting register 3 starts it.
+
+That leaves a short list, in order of likelihood:
+
+1. A command the vendor VxD issues before streaming that we have not found yet.
+   The 16-bit driver writes the 0x33A file only twice in its whole wave path
+   (index 3, value 0/1), so the sequence that starts the engine is in
+   `SCP95.VXD`, not in `SCP95.DRV`.
+2. A card mode that disables the memory interface until told otherwise - the
+   card does behave differently with the window reserved (the signature stops
+   reading 0xaa and `base+2` changes), so something in the configuration does
+   reach the card.
+3. The window is not for streaming at all, and the 1 MB is used by the card for
+   its own buffers, never read by the host. In that case PCM would need the
+   codec path, which needs DMA, which this socket does not have - and the
+   honest conclusion would be that this laptop cannot play PCM through this
+   card.
+
+The next step is therefore not on the card: it is reading `SCP95.VXD` for the
+sequence that precedes the first sample, and comparing it with what the 16-bit
+driver does.

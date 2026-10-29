@@ -1271,6 +1271,36 @@ static void scp55_codec_port_probe(void)
  *
  * Needs mem_probe=1, because that is what reserves the window.
  */
+/* Feed the window. Silence first: if the engine wakes up and consumes what we
+ * write, writing zeros is audible as nothing, which is the safe way to find
+ * out. The tone is deliberately quiet: we do not know the sample format yet,
+ * and a full-scale square wave through an unknown codec setting is a good way
+ * to hurt someone's ears.
+ *
+ * Writes walk the aperture instead of hammering offset 0, so the test means
+ * something whether the window is real RAM or a port that aliases.
+ */
+static void scp55_probe_stream(struct resource *res, void __iomem *map, int tone)
+{
+	int i, n = 8192;
+	u16 v;
+
+	if (!res || !map)
+		return;
+	if (pcmcia_map_mem_page(scp55_dev, res, 0))
+		return;
+
+	for (i = 0; i < n; i++) {
+		if (!tone)
+			v = 0;
+		else
+			v = ((i / 50) & 1) ? 0x1000 : 0xf000;
+		writew(v, map + ((i * 2) & (WIN_SIZE - 1)));
+	}
+	pr_info(DRV_NAME ": probe: wrote %d words of %s\n",
+		n, tone ? "quiet tone" : "silence");
+}
+
 static ssize_t scp55probe_write(struct file *file, const char __user *ubuf,
 				size_t count, loff_t *ppos)
 {
@@ -1302,6 +1332,10 @@ static ssize_t scp55probe_write(struct file *file, const char __user *ubuf,
 		scp55_write_test16(win_res, win_map);
 	} else if (!strncmp(buf, "w8", 2)) {
 		scp55_write_test(win_res, win_map);
+	} else if (!strncmp(buf, "zeros", 5)) {
+		scp55_probe_stream(win_res, win_map, 0);
+	} else if (!strncmp(buf, "tone", 4)) {
+		scp55_probe_stream(win_res, win_map, 1);
 	} else {
 		pr_info(DRV_NAME ": probe: unknown command\n");
 	}
@@ -1575,4 +1609,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.4.1");
+MODULE_VERSION("0.4.2");
