@@ -40,6 +40,14 @@ static int have_read;
 static char status[512] = "not probed\n";
 
 static int beep_on_probe = 1;
+/* Research switch: the memory window is reserved and walked only when asked.
+ * The synth does not need it, and reserving it changes the card's state, so
+ * the normal load stays exactly as it was before.
+ */
+static int mem_probe;
+module_param(mem_probe, int, 0644);
+MODULE_PARM_DESC(mem_probe, "reserve and walk the 1 MB memory window (research, default 0)");
+
 static int card_mode = 1;
 module_param(card_mode, int, 0644);
 MODULE_PARM_DESC(card_mode, "select the card's audio routing mode (3) at probe instead of relying on the codec loopback");
@@ -685,7 +693,7 @@ static int scp55_conf_check(struct pcmcia_device *link, void *priv)
 	 * that were requested before it, so asking afterwards is too late.
 	 * A refusal is not fatal - the MIDI path does not need it.
 	 */
-	if (!win_tried) {
+	if (mem_probe && !win_tried) {
 		win_tried = 1;
 		win_ret = scp55_window_reserve(link, 0);
 		attr_ret = scp55_window_reserve(link, 1);
@@ -897,7 +905,9 @@ static int scp55_probe(struct pcmcia_device *link)
 	 * to be negotiated, not invented (asking for 1 MB by hand failed with
 	 * -22).
 	 */
-	link->config_flags |= CONF_AUTO_SET_IO | CONF_AUTO_SET_IOMEM;
+	link->config_flags |= CONF_AUTO_SET_IO;
+	if (mem_probe)
+		link->config_flags |= CONF_AUTO_SET_IOMEM;
 	link->io_lines = 10;
 
 	ret = pcmcia_loop_config(link, scp55_conf_check, NULL);
@@ -979,8 +989,10 @@ static int scp55_probe(struct pcmcia_device *link)
 	if (beep_on_probe)
 		beep_locked();
 
-	scp55_port_snapshot("before window");
-	scp55_window_map(link);
+	if (mem_probe) {
+		scp55_port_snapshot("before window");
+		scp55_window_map(link);
+	}
 	return 0;
 }
 
@@ -1112,4 +1124,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.2.21");
+MODULE_VERSION("0.2.22");
