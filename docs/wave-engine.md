@@ -76,3 +76,43 @@ the card consumes them in order.
    control (0x09); the `0x33A` file is something else and is still unmapped.
 3. Only then write to the window from a test: a short silent frame at a known
    format, then a tone, with the mute ready.
+
+## Two facts that narrow the plan (29/10)
+
+### This socket has no DMA, measured
+
+`/sys/class/pcmcia_socket/pcmcia_socket0/` lists `available_resources_io`,
+`available_resources_mem` and `available_resources_setup_done`. There is no
+`available_resources_dma`. So on this laptop the CS4231's usual PCM path -
+ISA-style DMA - cannot be fed at all, whatever the driver asks for.
+
+That leaves exactly one route to PCM here: the memory window, if the card's
+controller really drains it in order. It also means the question 'can this card
+play PCM on Linux' is a question about the window, not about DMA.
+
+### The only iret is a vector-chaining stub
+
+Segment 5 holds the single `iret` of the whole driver, and it is not an audio
+handler. The code around it is a hook/unhook helper: `int 21h ah=35` to read a
+vector, `int 21h ah=25` to install one, and the stub itself does
+
+    push ds / push es / pushad
+    mov ax, 0xffff ; mov ds, ax ; sti
+    call 0xffff:0xd3a          ; chain to the previous handler
+    cli
+    mov si, 0x1234
+    mov ax, [si+0x41] ; or al, al ; jz skip ; mov dx, [si+0x48] ; out dx, al
+    mov al, ah ; mov dx, [si+0x46] ; out dx, al
+    popad / pop es / pop ds / iret
+
+So the interrupt path ends by writing two values to two ports taken from a
+structure - which looks like an acknowledge to the card, not like feeding it
+audio. Finding who installs this hook, and with which vector, is the next step.
+
+### No literal ports anywhere
+
+A scan of segments 3, 6, 7 and 8 finds no `out 0xNN` / `in al,0xNN`: every port
+access goes through `dx` loaded from a structure field. That is why the
+disassembly shows a lot of `out dx, al` with nothing readable around them, and
+why the register map has to be recovered by following the structure, not by
+grepping for constants.
