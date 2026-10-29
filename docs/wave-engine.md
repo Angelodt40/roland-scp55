@@ -225,3 +225,50 @@ the driver does.
 The honest position for the project today: the card is a working MIDI synth
 interface with a working volume control, the memory window is mapped and
 measured, and PCM is an open research question with no promise attached.
+
+## Inside SCP95.VXD: the object table (29/10)
+
+Parsed from the LE header at 0x80. Page size is 0x200 (512 bytes), 27 pages,
+no resident name table and no fixup tables where the usual layout puts them -
+which is why a textbook LE parser returns nothing useful.
+
+The object table sits at file offset 0x144, seven entries of 24 bytes, each
+ending with a four-character name:
+
+    object   size     flags   page   pages  name
+    1        0x119b   0x2045  1      9      LCOD
+    2        0x0087   0x2005  0x0a   1      RARE
+    3        0x0871   0x2005  0x0b   5      PNP
+    4        0x005a   0x2005  0x10   1      _LMS
+    5        0x1056   0x2005  0x11   9      PCOD
+    6        0x013e   0x2023  0x1a   1      PDAT
+    7        0x00ec   0x2015  0x1b   1      ICOD
+
+So there are two code objects of nine pages each (LCOD and PCOD), a small ICOD,
+a PDAT data object, and three small ones. Page map at file offset 0x1ec maps
+consecutive page numbers - the pages are not interleaved.
+
+Nothing here says which object holds the wave path; that needs the pages
+extracted and disassembled with the relocation records applied, and the
+relocations are exactly what this header does not describe in the usual place.
+
+## Plan for the machine with Windows 98
+
+The decisive experiment is not more static analysis: it is watching the vendor
+driver work.
+
+1. Install Win98 on the CF-30 (or any machine with a 16-bit PCMCIA socket), then
+   SCP95.DRV and the mixer from the original disk. PCMCIA support in 98 is good
+   enough for this socket.
+2. Play a WAV from the control panel, or simply click a system sound, while
+   logging port writes.
+3. What to log: every write to 0x330-0x33B, with the value and the order, plus
+   reads of the status ports. That sequence *is* the answer - it is what we have
+   been trying to reconstruct from disassembly for two days.
+4. If no logger is available, the fallback is a minimal VxD that hooks the port
+   I/O, or a hardware probe on the socket lines. Both are more work than the
+   logger, so try the software route first.
+
+Until that happens, the honest statement stays: PCM is not implemented, the
+memory window is mapped and measured, and nothing we have tried makes the card
+consume a stream.
