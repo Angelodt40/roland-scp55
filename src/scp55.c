@@ -40,7 +40,10 @@ static u8 last_read;
 static int have_read;
 static char status[512] = "not probed\n";
 
-static int beep_on_probe = 1;
+/* A test phrase at probe is useful while working on the card and rude
+ * everywhere else: loading a module must not make a sound on its own.
+ */
+static int beep_on_probe;
 /* Research switch: the memory window is reserved and walked only when asked.
  * The synth does not need it, and reserving it changes the card's state, so
  * the normal load stays exactly as it was before.
@@ -82,7 +85,7 @@ static bool pending_reset, pending_panic;
 static unsigned int reset_open_count, reset_close_count, tx_byte_count;
 
 static void mpu_init(void);
-module_param(beep_on_probe, int, 0444);
+module_param(beep_on_probe, int, 0644);
 
 static struct pcmcia_device_id scp55_ids[] = {
 	PCMCIA_DEVICE_MANF_CARD(0xc00c, 0x0001),
@@ -1442,4 +1445,4 @@ module_exit(scp55_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Angelo Di Tomasso");
 MODULE_DESCRIPTION("Roland SCP-55 PCMCIA Sound Canvas: socket, codec, ALSA rawmidi");
-MODULE_VERSION("0.3.1");
+MODULE_VERSION("0.3.2");

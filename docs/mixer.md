@@ -78,3 +78,42 @@ and it does not depend on the memory window.
 - The sixteen `mov [di+..]` in segment 8 of `SCP95.DRV` copy a parameter block
   into a structure; they are not frame writes.
 - The three `rep movsw` at the top of segment 7 copy driver tables at init.
+
+## The mixer writes real registers, but not the ones you hear (29/10)
+
+The ALSA mixer in 0.3.0/0.3.1 exposes Master/Aux1/Aux2 playback, AD input,
+line and mic capture, and a master mute switch, all on the CS4231 registers at
+`0x338`/`0x339`. Verified in reading: `amixer 0` writes attenuation 3, `amixer`
+3 writes 0, the switch sets and clears bit 7 on both DAC registers.
+
+The scale is four steps, not eight. Writing each attenuation value to `0x06`
+and reading it back:
+
+| written | read back |
+| --- | --- |
+| `00` | `00` |
+| `10` | `10` |
+| `20` | `20` |
+| `30` | `30` |
+| `40` | `00` |
+| `50` | `10` |
+| `70` | `30` |
+
+The register keeps two bits; the value wraps above `0x30`. So the honest range
+is 0..3, which is what the driver now uses.
+
+**And then the part that matters:** with `Master Playback Switch` off (DAC
+registers at `0x88`/`0x80`) a chord sounded exactly as loud as with the switch
+on. The mute does not silence the synth. So these registers are real and
+writable, but the audible synth path does not pass through them - which also
+means the four attenuation steps cannot be heard.
+
+That is not a broken control, it is a control on the wrong path. What a Sound
+Canvas actually uses for output level is the GS master volume, a SysEx message
+(`F0 41 10 42 12 40 00 04 vv sum F7`), not a codec register.
+
+### A test-hygiene lesson
+
+`beep_on_probe` used to default to 1, so every `insmod` played a test phrase.
+That silent beep sat under several A/B listening tests and made them ambiguous.
+It is now opt-in (default 0) and writable at runtime.
