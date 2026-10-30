@@ -225,6 +225,13 @@ static void beep_locked(void)
 static struct snd_rawmidi_substream *rx_sub;
 static bool rx_running;
 static struct delayed_work rx_work;
+/* Measured on hardware: at power-on the card can leave DRR stuck high with a
+ * phantom byte, and the drain loop below then hands ALSA that same byte
+ * forever (8000/s). Real MIDI cannot repeat 64 identical bytes 20 times in a
+ * row, so a run like that is a stuck interface, not traffic.
+ */
+static unsigned int rx_stuck;
+static unsigned char rx_prev;
 
 static void rx_work_fn(struct work_struct *w)
 {
@@ -247,6 +254,21 @@ static void rx_work_fn(struct work_struct *w)
 			buf[n++] = inb(io_base);
 	}
 	mutex_unlock(&io_mutex);
+
+	if (n == (int)sizeof(buf) && buf[0] == rx_prev) {
+		rx_stuck++;
+	} else {
+		rx_stuck = 0;
+		rx_prev = n ? buf[0] : rx_prev;
+	}
+
+	if (rx_stuck > 20) {
+		pr_info(DRV_NAME ": input stuck at 0x%02x, stopping reads\n", buf[0]);
+		spin_lock_irqsave(&state_lock, flags);
+		rx_running = false;
+		spin_unlock_irqrestore(&state_lock, flags);
+		return;
+	}
 
 	if (n)
 		snd_rawmidi_receive(sub, buf, n);
@@ -861,17 +883,35 @@ static void mpu_init(void)
 		}
 	}
 
-	/* Still not answering: full reset, then UART mode again. */
+	/* Still not answering: full reset, then UART mode again.
+	 * Measured 30/10: 0xFF puts DRR back up with a phantom byte, and if the
+	 * following 0x3F is not acknowledged the port stays in that state, where
+	 * every read returns the same byte. So drain between attempts and never
+	 * return leaving DRR high.
+	 */
 	pr_info(DRV_NAME ": UART mode not acknowledged, resetting the MPU\n");
 	if (mpu_ready(500))
 		outb(0xff, io_base + 1);
-	mpu_wait_read(&ack, 1000);
-	if (mpu_ready(500))
-		outb(0x3f, io_base + 1);
-	if (mpu_wait_read(&ack, 1000) && ack == 0xfe)
-		pr_info(DRV_NAME ": UART mode restored after reset\n");
-	else
-		pr_info(DRV_NAME ": MPU-401 still silent\n");
+	msleep(20);
+	for (i = 0; i < 8 && (inb(io_base + 1) & 0x80); i++)
+		inb(io_base);
+
+	for (attempt = 0; attempt < 5; attempt++) {
+		if (mpu_ready(500)) {
+			outb(0x3f, io_base + 1);
+			if (mpu_wait_read(&ack, 300) && ack == 0xfe) {
+				pr_info(DRV_NAME ": UART mode restored after reset\n");
+				return;
+			}
+		}
+		msleep(20);
+		for (i = 0; i < 8 && (inb(io_base + 1) & 0x80); i++)
+			inb(io_base);
+	}
+
+	pr_info(DRV_NAME ": MPU-401 still silent, input left idle\n");
+	for (i = 0; i < 8 && (inb(io_base + 1) & 0x80); i++)
+		inb(io_base);
 }
 
 static int card_setup(struct pcmcia_device *link)
