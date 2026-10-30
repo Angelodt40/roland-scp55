@@ -70,6 +70,13 @@ at `base+4`/`base+5`.
   commands; if the following `0x3F` is lost the card stays there and silently
   discards every note. This cost a whole debugging session: the byte counters
   kept growing while the card was mute.
+- **Measured 30/10:** after `0xFF` the card sits in *intelligent mode* and silently
+  discards note bytes - it plays nothing at all. Sending `0x3F` again (answer
+  `0xFE`) brings it back to UART mode and the synth sounds immediately. So a card
+  that "stopped playing" after a reset is cured by `0x3F` alone, no power cycle.
+  Never end an experiment with DRR high either: every read then returns the same
+  phantom byte (measured: `0x42` at ~8000 B/s), and `rx_work_fn` now stops
+  reading a run like that instead of handing it to ALSA.
 - If re-initialisation is ever needed, the vendor order is: wait for DSR,
   `0x3F`, wait for the `0xFE` acknowledgement, then `0xFF`.
 
