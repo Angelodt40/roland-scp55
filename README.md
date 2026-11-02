@@ -13,10 +13,21 @@ Qtractor, vmpk, a tracker, a script.
 
 No firmware, no proprietary blobs, no vendor daemon. One small kernel module.
 
+![Roland SCP-55 card and the MCB-3 breakout box](docs/scp55-hardware.jpg)
+
 **Status:** working as a MIDI synth interface. Tested on a Panasonic CF-30
 (Toughbook) running MX-23.6 Fluxbox i386, kernel `6.1.0-54-686-pae`. This is a
 single-hardware report — see [docs/hardware.md](docs/hardware.md) for what is
 known and what is not.
+
+## Why this exists
+
+The SCP-55 was a 1995 Windows sound card that nobody ever wrote a Linux driver
+for. The hardware still works: the cards survive in drawers, the machines that
+hosted them do not. The vendor driver is a 16-bit DOS binary, the printed
+documentation is thin, and without something that knows how to bring it up the
+card is a paperweight. This is that something — small, readable, and explicit
+about what it does not do.
 
 ## Scope, stated plainly
 
