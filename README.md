@@ -1,4 +1,4 @@
-# scp55 — Linux driver for the Roland SCP-55 "Sound Canvas" PC Card
+# scp55 - Linux driver for the Roland SCP-55 "Sound Canvas" PC Card
 
 [![build](https://github.com/Angelodt40/roland-scp55/actions/workflows/build.yml/badge.svg)](https://github.com/Angelodt40/roland-scp55/actions/workflows/build.yml)
 
