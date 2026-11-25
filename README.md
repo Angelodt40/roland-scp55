@@ -66,7 +66,8 @@ writable and verifiable, but measured not to be on the path the synth takes to
 the output, so they do not change what you hear.
 
 Not working, with reasons in [docs/hardware.md](docs/hardware.md): PCM playback,
-and reliable resume from suspend on the test machine. **MIDI input is untested,
+and — on the test machine — a usable resume from suspend: the socket and the
+codec come back, the MPU does not. **MIDI input is untested,
 not disproven**: in our tests the card never sent a byte back, but its MIDI IN
 side was never exercised because the breakout cable was missing. The mixer map
 and what the codec controls really do is in [docs/mixer.md](docs/mixer.md).
@@ -91,7 +92,6 @@ that "does nothing" is usually not broken, just silent.
    (control registers `base+4` / `base+5` set to 3 / 1). Releases up to 0.2.1
    used an ADC-to-DAC loopback instead: that was a workaround for this routing,
    not the real path.
-   silent even when every status register says it is healthy.
 4. It registers an ALSA rawmidi device; the sequencer port appears as
    `Roland SCP-55` in `aplaymidi -l`.
 5. It deliberately leaves the MPU-401 alone. The card is already in UART mode
@@ -130,7 +130,7 @@ Three options, from least work to most control.
 Download the `.deb` from the [releases page](https://github.com/Angelodt40/roland-scp55/releases)
 and install it. It builds itself through DKMS, so kernel updates are handled:
 
-    sudo apt install ./scp55-dkms_0.2.0-1_all.deb
+    sudo apt install ./scp55-dkms_0.4.5-1_all.deb
 
 ### 2. From the repository, one command
 
@@ -150,11 +150,11 @@ up when it is present, including after a reboot.
 DKMS rebuilds the module automatically after a kernel update. Copy only what
 the build needs — not the whole working tree:
 
-    sudo mkdir -p /usr/src/scp55-0.2.0
-    sudo cp -r src dkms.conf /usr/src/scp55-0.2.0/
-    sudo dkms add -m scp55 -v 0.2.0
-    sudo dkms build -m scp55 -v 0.2.0
-    sudo dkms install -m scp55 -v 0.2.0 --force
+    sudo mkdir -p /usr/src/scp55-0.4.5
+    sudo cp -r src dkms.conf /usr/src/scp55-0.4.5/
+    sudo dkms add -m scp55 -v 0.4.5
+    sudo dkms build -m scp55 -v 0.4.5
+    sudo dkms install -m scp55 -v 0.4.5 --force
     sudo depmod -a
 
 ### Without DKMS
@@ -282,16 +282,19 @@ and the same for `0x07`, without touching the power. And `scripts/scp55-vendor-p
 is the instrument for all of this: it walks the sequence one step at a time and
 prints what the card answers, so a failure can be attributed instead of guessed.
 
-It writes what happened to `/tmp/scp55-resume.log`. Without the hook the card is
-unavailable until the next reboot; results on other machines may differ, and
-reports are welcome.
+The hook writes what happened to `/tmp/scp55-resume.log`. On the test
+machine it is no longer needed for the socket, because resume rebuilds the
+window itself; it stays in the repository for machines whose bridge really
+does time out after a resume. Results from other hardware are welcome.
 
 ## Status of testing
 
 Verified on one machine only (details above). What is not verified, and worth
 knowing before you spend an evening on it:
 
-- suspend/resume — the socket is programmed at load time and not restored
+- suspend/resume — on the test machine the socket and the codec ARE restored
+  after resume, but the MPU stays mute until the machine is really powered down:
+  see Suspend and resume above
 - kernels other than 6.x — the code uses plain inb/outb and the ALSA rawmidi
   API, so it should port, but nobody has tried at runtime
 - two cards in one machine — the sequencer port name is fixed
