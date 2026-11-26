@@ -20,6 +20,11 @@ No firmware, no proprietary blobs, no vendor daemon. One small kernel module.
 single-hardware report — see [docs/hardware.md](docs/hardware.md) for what is
 known and what is not.
 
+> **Did it work on your machine?** Please [open a report](https://github.com/Angelodt40/roland-scp55/issues/new?template=hardware-report.yml)
+> — laptop model, kernel version, working or not. One line from you is worth more
+> than a thousand stars: it turns "works on my CF-30" into a list of verified
+> machines, which is the only thing this project is missing.
+
 ## Why this exists
 
 The SCP-55 was a 1995 Windows sound card that nobody ever wrote a Linux driver

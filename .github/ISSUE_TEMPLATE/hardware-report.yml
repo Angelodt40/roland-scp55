@@ -1,0 +1,59 @@
+name: Hardware report
+description: Tell us whether the driver works on your machine
+title: "[report] <laptop model> — <kernel> — <works or not>"
+labels: ["hardware report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Two fields and a result are enough — everything else is optional.
+        This project has been tested on exactly one machine so far; your report is what makes it a real driver.
+
+  - type: input
+    id: machine
+    attributes:
+      label: Laptop / machine and PCMCIA controller
+      description: Model name; the controller is in `lspci | grep -i cardbus` or `lspcmcia` output, if you have it.
+      placeholder: Panasonic CF-30, Ricoh RL5C476
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel version
+      description: Output of `uname -r`.
+      placeholder: 6.1.0-54-686-pae
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works — the card shows up and plays
+        - Works partially (e.g. sound but no MIDI input, or vice versa)
+        - Fails to load the module
+        - Card not detected at all
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details and logs
+      description: |
+        What you did, what happened. Useful bits: `dmesg | grep -i scp55`, `amidi -l`, `aplaymidi -l`,
+        and the output of `cat /proc/asound/cards`.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Driver version
+      description: Tag or commit you built (`git log -1 --oneline`).
+    validations:
+      required: false
