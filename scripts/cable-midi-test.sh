@@ -77,3 +77,16 @@ else
 	echo 'Next test, and the one that matters: keyboard MIDI OUT into the card'
 	echo 'MIDI IN, channel 1, and see if the SCP-55 makes a sound.'
 fi
+
+# --- optional: listen only -------------------------------------------------
+# cable-midi-test.sh listen [seconds]   - dump the card's input while you play
+# Use it with the keyboard on the card's MIDI IN. Bytes arriving here mean the
+# card forwards external MIDI to the host; zero bytes prove nothing either way.
+if [ "${1:-}" = listen ]; then
+	SECS=${2:-15}
+	echo "listening on $PORT for $SECS s - play the keyboard now"
+	timeout "$SECS" amidi -p "$PORT" -d | tee /tmp/scp55-listen.hex
+	N=$(grep -c . /tmp/scp55-listen.hex 2>/dev/null); N=${N:-0}
+	echo "--- $N rows"
+	exit 0
+fi
